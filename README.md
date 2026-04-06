@@ -46,8 +46,9 @@ Copy-Item .env.example .env
 ```
 
 5. Edit `.env` and set `DISCORD_TOKEN` to your Discord bot token. `DB_PATH` defaults to `data/morkbotted.db`.
-6. In the Discord developer portal, enable the `MESSAGE CONTENT INTENT` for your bot if you want to keep using the legacy `!` commands.
-7. Run the bot:
+6. Optional but recommended for faster slash-command updates while you deploy changes: set `COMMAND_SYNC_GUILD_ID` to your main Discord server id.
+7. In the Discord developer portal, enable the `MESSAGE CONTENT INTENT` for your bot if you want to keep using the legacy `!` commands.
+8. Run the bot:
 
 ```powershell
 python bot.py
@@ -55,6 +56,7 @@ python bot.py
 
 Character and class data are stored in `data/morkbotted.db`. If `data/characters.json` exists from an older version, the bot migrates it into SQLite the first time the new store starts.
 New class seed data is also backfilled into existing databases on startup.
+If `COMMAND_SYNC_GUILD_ID` is set, the bot also syncs slash commands directly into that server on startup so command changes appear much faster than waiting on global propagation.
 
 ## Slash commands
 

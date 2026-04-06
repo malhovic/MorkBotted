@@ -279,6 +279,7 @@ def build_bot() -> commands.Bot:
     prefix = os.getenv("COMMAND_PREFIX", "!")
     data_dir = Path(os.getenv("DATA_DIR", "data"))
     db_path = Path(os.getenv("DB_PATH", str(data_dir / "morkbotted.db")))
+    sync_guild_id = os.getenv("COMMAND_SYNC_GUILD_ID", "").strip()
 
     intents = discord.Intents.default()
     intents.message_content = True
@@ -331,7 +332,13 @@ def build_bot() -> commands.Bot:
     async def on_ready() -> None:
         nonlocal slash_synced
         if not slash_synced:
-            await bot.tree.sync()
+            if sync_guild_id:
+                guild_object = discord.Object(id=int(sync_guild_id))
+                bot.tree.copy_global_to(guild=guild_object)
+                synced_commands = await bot.tree.sync(guild=guild_object)
+                print(f"Synced {len(synced_commands)} slash command(s) to guild {sync_guild_id}.")
+            synced_commands = await bot.tree.sync()
+            print(f"Synced {len(synced_commands)} global slash command(s).")
             slash_synced = True
         print(f"Logged in as {bot.user} and ready to spread misery.")
 
