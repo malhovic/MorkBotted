@@ -257,6 +257,22 @@ def run_getting_better(character: Character, mode: str, manual_choices: dict[str
     return summaries
 
 
+def get_active_character_for_context(
+    store: CharacterStore,
+    user: discord.abc.User,
+    guild_id: int | None,
+) -> Character | None:
+    if guild_id is not None:
+        return store.get_active_character(guild_id, user.id)
+    return store.get(user.id)
+
+
+def ensure_guild_id(guild: discord.Guild | None) -> int:
+    if guild is None:
+        raise commands.BadArgument("This command needs to be used in a server so the bot knows which active character to use.")
+    return guild.id
+
+
 def build_bot() -> commands.Bot:
     load_dotenv()
     prefix = os.getenv("COMMAND_PREFIX", "!")
@@ -276,6 +292,14 @@ def build_bot() -> commands.Bot:
             raise commands.BadArgument(f"No character found for {user.display_name}. Start with `{prefix}create`.")
         return character
 
+    def require_character_for_ctx(ctx: commands.Context) -> Character:
+        character = get_active_character_for_context(store, ctx.author, ctx.guild.id if ctx.guild else None)
+        if character is None:
+            raise commands.BadArgument(
+                f"No active character found for {ctx.author.display_name}. Use `/create` or `/character-switch`."
+            )
+        return character
+
     async def class_name_autocomplete(
         interaction: discord.Interaction,
         current: str,
@@ -287,6 +311,19 @@ def build_bot() -> commands.Bot:
             for class_template in store.list_classes()
             if not current_lower or current_lower in class_template.name.lower()
         ]
+        return matches[:25]
+
+    async def character_name_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        current_lower = current.lower()
+        matches = []
+        for character in store.list_characters(interaction.user.id, include_archived=True):
+            label = f"{character.name} [{character.status}] #{character.id}"
+            if current_lower and current_lower not in label.lower():
+                continue
+            matches.append(app_commands.Choice(name=label[:100], value=str(character.id)))
         return matches[:25]
 
     @bot.event
@@ -307,6 +344,9 @@ def build_bot() -> commands.Bot:
         lines = [
             "Slash commands are now the primary interface.",
             "`/create` build or import a character with helper fields",
+            "`/characters` list your roster",
+            "`/character-switch` set the active character for this server",
+            "`/character-archive` mark a character archived, dead, npc, or active",
             "`/gettingbetter` update stats with typed options",
             "`/classes` list stored classes",
             "`/classinfo` inspect one stored class",
@@ -408,14 +448,16 @@ def build_bot() -> commands.Bot:
             notes=parse_csv_field(form_data.get("notes")),
         )
         apply_class_selection(store, character, form_data["class"])
-        store.upsert(character)
+        character = store.upsert(character)
+        if ctx.guild is not None and character.id is not None:
+            store.set_active_character(ctx.guild.id, ctx.author.id, character.id)
         await dm_channel.send("Character created and saved.")
         await dm_channel.send(build_character_sheet(character))
         await ctx.send(f"Saved **{character.name}** from your DM form.")
 
     @bot.command(name="gettingbetter")
     async def gettingbetter(ctx: commands.Context) -> None:
-        character = require_character(ctx.author)
+        character = require_character_for_ctx(ctx)
         try:
             dm_channel = await ensure_dm_channel(ctx.author)
         except discord.Forbidden:
@@ -513,12 +555,12 @@ def build_bot() -> commands.Bot:
 
     @bot.command(name="sheet")
     async def sheet(ctx: commands.Context) -> None:
-        character = require_character(ctx.author)
+        character = require_character_for_ctx(ctx)
         await ctx.send(build_character_sheet(character))
 
     @bot.command(name="export")
     async def export(ctx: commands.Context) -> None:
-        character = require_character(ctx.author)
+        character = require_character_for_ctx(ctx)
         payload = BytesIO(character.export_text().encode("utf-8"))
         await ctx.send(
             content=f"Export for **{character.name}**",
@@ -527,7 +569,7 @@ def build_bot() -> commands.Bot:
 
     @bot.command(name="setstat")
     async def setstat(ctx: commands.Context, ability: str, value: str) -> None:
-        character = require_character(ctx.author)
+        character = require_character_for_ctx(ctx)
         normalized = normalize_ability_name(ability)
         parsed_value = parse_int(value)
         character.discord_name = ctx.author.display_name
@@ -537,7 +579,7 @@ def build_bot() -> commands.Bot:
 
     @bot.command(name="setfield")
     async def setfield(ctx: commands.Context, field_name: str, *, value: str) -> None:
-        character = require_character(ctx.author)
+        character = require_character_for_ctx(ctx)
         normalized = field_name.lower().strip()
         if normalized not in EDITABLE_FIELDS:
             choices = ", ".join(sorted(EDITABLE_FIELDS))
@@ -556,7 +598,7 @@ def build_bot() -> commands.Bot:
 
     @bot.command(name="improve")
     async def improve(ctx: commands.Context, field_name: str, delta: str) -> None:
-        character = require_character(ctx.author)
+        character = require_character_for_ctx(ctx)
         normalized = field_name.lower().strip()
         amount = parse_int(delta)
 
@@ -580,7 +622,7 @@ def build_bot() -> commands.Bot:
 
     @bot.command(name="additem")
     async def additem(ctx: commands.Context, *, item: str) -> None:
-        character = require_character(ctx.author)
+        character = require_character_for_ctx(ctx)
         character.discord_name = ctx.author.display_name
         character.equipment.append(item.strip())
         store.upsert(character)
@@ -588,7 +630,7 @@ def build_bot() -> commands.Bot:
 
     @bot.command(name="removeitem")
     async def removeitem(ctx: commands.Context, *, item: str) -> None:
-        character = require_character(ctx.author)
+        character = require_character_for_ctx(ctx)
         target = item.strip()
         try:
             character.equipment.remove(target)
@@ -599,7 +641,7 @@ def build_bot() -> commands.Bot:
 
     @bot.command(name="addnote")
     async def addnote(ctx: commands.Context, *, note: str) -> None:
-        character = require_character(ctx.author)
+        character = require_character_for_ctx(ctx)
         character.discord_name = ctx.author.display_name
         character.notes.append(note.strip())
         store.upsert(character)
@@ -607,7 +649,7 @@ def build_bot() -> commands.Bot:
 
     @bot.command(name="removenote")
     async def removenote(ctx: commands.Context, *, note: str) -> None:
-        character = require_character(ctx.author)
+        character = require_character_for_ctx(ctx)
         target = note.strip()
         try:
             character.notes.remove(target)
@@ -620,7 +662,7 @@ def build_bot() -> commands.Bot:
     async def roll(ctx: commands.Context, target: str, dr: int = DEFAULT_DR) -> None:
         lowered = target.lower().strip()
         if lowered in ABILITY_NAMES or lowered in ABILITY_ALIAS_SET:
-            character = require_character(ctx.author)
+            character = require_character_for_ctx(ctx)
             ability_name = normalize_ability_name(lowered)
             modifier = character.get_ability(ability_name)
             die = random.randint(1, 20)
@@ -662,19 +704,100 @@ def build_bot() -> commands.Bot:
             return
         await interaction.response.send_message(build_class_summary(class_template), ephemeral=True)
 
+    @bot.tree.command(name="characters", description="List your saved characters and their status.")
+    async def slash_characters(interaction: discord.Interaction) -> None:
+        characters = store.list_characters(interaction.user.id, include_archived=True)
+        if not characters:
+            await interaction.response.send_message("You do not have any saved characters yet. Start with `/create`.", ephemeral=True)
+            return
+        active_id = None
+        if interaction.guild_id is not None:
+            active_character = store.get_active_character(interaction.guild_id, interaction.user.id)
+            active_id = active_character.id if active_character else None
+        lines = []
+        for character in characters:
+            active_marker = " <- active here" if active_id == character.id else ""
+            lines.append(f"- #{character.id} **{character.name}** [{character.status}] ({character.class_name}){active_marker}")
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+    @bot.tree.command(name="character-switch", description="Set your active character for this server.")
+    @app_commands.describe(character="Character name or id")
+    @app_commands.autocomplete(character=character_name_autocomplete)
+    async def slash_character_switch(interaction: discord.Interaction, character: str) -> None:
+        if interaction.guild_id is None:
+            await interaction.response.send_message("Use this in a server so I can store your active character for that server.", ephemeral=True)
+            return
+        selected = store.find_character(interaction.user.id, character, include_archived=False)
+        if selected is None:
+            await interaction.response.send_message("I couldn't find an active character matching that selection.", ephemeral=True)
+            return
+        if selected.id is None:
+            await interaction.response.send_message("That character is missing an internal id and cannot be activated.", ephemeral=True)
+            return
+        store.set_active_character(interaction.guild_id, interaction.user.id, selected.id)
+        await interaction.response.send_message(f"Active character for this server is now **{selected.name}**.", ephemeral=True)
+
+    @bot.tree.command(name="character-archive", description="Mark one of your characters as archived, dead, or NPC.")
+    @app_commands.describe(character="Character name or id", status="New stored status")
+    @app_commands.autocomplete(character=character_name_autocomplete)
+    @app_commands.choices(
+        status=[
+            app_commands.Choice(name="Archived", value="archived"),
+            app_commands.Choice(name="Dead", value="dead"),
+            app_commands.Choice(name="NPC", value="npc"),
+            app_commands.Choice(name="Active", value="active"),
+        ]
+    )
+    async def slash_character_archive(
+        interaction: discord.Interaction,
+        character: str,
+        status: str,
+    ) -> None:
+        selected = store.find_character(interaction.user.id, character, include_archived=True)
+        if selected is None or selected.id is None:
+            await interaction.response.send_message("I couldn't find a character matching that selection.", ephemeral=True)
+            return
+        updated = store.set_character_status(selected.id, status)
+        if updated is None:
+            await interaction.response.send_message("I couldn't update that character.", ephemeral=True)
+            return
+        if interaction.guild_id is not None and status in {"archived", "dead", "npc"}:
+            active_character = store.get_active_character(interaction.guild_id, interaction.user.id)
+            if active_character and active_character.id == updated.id:
+                replacement = next((item for item in store.list_characters(interaction.user.id) if item.id != updated.id), None)
+                if replacement and replacement.id is not None:
+                    store.set_active_character(interaction.guild_id, interaction.user.id, replacement.id)
+                else:
+                    store.clear_active_character(interaction.guild_id, interaction.user.id)
+        await interaction.response.send_message(
+            f"Character **{updated.name}** is now marked `{updated.status}`.",
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="character-delete", description="Permanently delete one of your saved characters.")
+    @app_commands.describe(character="Character name or id")
+    @app_commands.autocomplete(character=character_name_autocomplete)
+    async def slash_character_delete(interaction: discord.Interaction, character: str) -> None:
+        selected = store.find_character(interaction.user.id, character, include_archived=True)
+        if selected is None or selected.id is None:
+            await interaction.response.send_message("I couldn't find a character matching that selection.", ephemeral=True)
+            return
+        store.delete_character(selected.id)
+        await interaction.response.send_message(f"Deleted character **{selected.name}**.", ephemeral=True)
+
     @bot.tree.command(name="sheet", description="Show your saved character sheet.")
     async def slash_sheet(interaction: discord.Interaction) -> None:
-        character = store.get(interaction.user.id)
+        character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No character found. Start with `/create`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
             return
         await interaction.response.send_message(build_character_sheet(character), ephemeral=True)
 
     @bot.tree.command(name="export", description="Export your saved character sheet as a text file.")
     async def slash_export(interaction: discord.Interaction) -> None:
-        character = store.get(interaction.user.id)
+        character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No character found. Start with `/create`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
             return
         payload = BytesIO(character.export_text().encode("utf-8"))
         await interaction.response.send_message(
@@ -688,9 +811,9 @@ def build_bot() -> commands.Bot:
     async def slash_roll(interaction: discord.Interaction, target: str, dr: int = DEFAULT_DR) -> None:
         lowered = target.lower().strip()
         if lowered in ABILITY_NAMES or lowered in ABILITY_ALIAS_SET:
-            character = store.get(interaction.user.id)
+            character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
             if character is None:
-                await interaction.response.send_message("No character found. Start with `/create`.", ephemeral=True)
+                await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
                 return
             ability_name = normalize_ability_name(lowered)
             modifier = character.get_ability(ability_name)
@@ -710,7 +833,7 @@ def build_bot() -> commands.Bot:
         modifier_text = f" {modifier:+d}" if modifier else ""
         await interaction.response.send_message(f"Rolled `{target}` -> {rolls}{modifier_text} = **{total}**")
 
-    @bot.tree.command(name="create", description="Create or replace your stored character.")
+    @bot.tree.command(name="create", description="Create a new character and make it active in this server.")
     @app_commands.describe(
         name="Character name",
         class_name="Stored class name or custom class label",
@@ -771,14 +894,16 @@ def build_bot() -> commands.Bot:
                 ephemeral=True,
             )
             return
+        if interaction.guild_id is not None and character.id is not None:
+            store.set_active_character(interaction.guild_id, interaction.user.id, character.id)
         await interaction.response.send_message(f"Character saved.\n{build_character_sheet(character)}", ephemeral=True)
 
     @bot.tree.command(name="setstat", description="Set one of your ability modifiers.")
     @app_commands.describe(ability="Ability name", value="Modifier like -1, 0, or +2")
     async def slash_setstat(interaction: discord.Interaction, ability: str, value: str) -> None:
-        character = store.get(interaction.user.id)
+        character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No character found. Start with `/create`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
             return
         try:
             normalized = normalize_ability_name(ability)
@@ -797,9 +922,9 @@ def build_bot() -> commands.Bot:
     @bot.tree.command(name="setfield", description="Update one saved character field.")
     @app_commands.describe(field_name="Field such as hp, background, or class_name", value="New value")
     async def slash_setfield(interaction: discord.Interaction, field_name: str, value: str) -> None:
-        character = store.get(interaction.user.id)
+        character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No character found. Start with `/create`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
             return
         normalized = field_name.lower().strip()
         if normalized not in EDITABLE_FIELDS:
@@ -828,9 +953,9 @@ def build_bot() -> commands.Bot:
     @bot.tree.command(name="improve", description="Adjust a saved stat or tracked field by a delta.")
     @app_commands.describe(field_name="Ability, hp, max_hp, omens, or silver", delta="Adjustment like +1 or -2")
     async def slash_improve(interaction: discord.Interaction, field_name: str, delta: str) -> None:
-        character = store.get(interaction.user.id)
+        character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No character found. Start with `/create`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
             return
         normalized = field_name.lower().strip()
         try:
@@ -861,9 +986,9 @@ def build_bot() -> commands.Bot:
 
     @bot.tree.command(name="additem", description="Add one item to your equipment list.")
     async def slash_additem(interaction: discord.Interaction, item: str) -> None:
-        character = store.get(interaction.user.id)
+        character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No character found. Start with `/create`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
             return
         character.discord_name = interaction.user.display_name
         character.equipment.append(item.strip())
@@ -872,9 +997,9 @@ def build_bot() -> commands.Bot:
 
     @bot.tree.command(name="removeitem", description="Remove one item from your equipment list.")
     async def slash_removeitem(interaction: discord.Interaction, item: str) -> None:
-        character = store.get(interaction.user.id)
+        character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No character found. Start with `/create`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
             return
         target = item.strip()
         try:
@@ -887,9 +1012,9 @@ def build_bot() -> commands.Bot:
 
     @bot.tree.command(name="addnote", description="Add one note to your character.")
     async def slash_addnote(interaction: discord.Interaction, note: str) -> None:
-        character = store.get(interaction.user.id)
+        character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No character found. Start with `/create`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
             return
         character.discord_name = interaction.user.display_name
         character.notes.append(note.strip())
@@ -898,9 +1023,9 @@ def build_bot() -> commands.Bot:
 
     @bot.tree.command(name="removenote", description="Remove one note from your character.")
     async def slash_removenote(interaction: discord.Interaction, note: str) -> None:
-        character = store.get(interaction.user.id)
+        character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No character found. Start with `/create`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
             return
         target = note.strip()
         try:
@@ -953,9 +1078,9 @@ def build_bot() -> commands.Bot:
         strength: str | None = None,
         toughness: str | None = None,
     ) -> None:
-        character = store.get(interaction.user.id)
+        character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No character found. Start with `/create`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
             return
 
         manual_choices = None

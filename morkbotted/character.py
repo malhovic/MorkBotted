@@ -59,9 +59,11 @@ class ClassTemplate:
 class Character:
     user_id: int
     discord_name: str
+    id: int | None = None
     name: str = "Unnamed Scvm"
     class_id: int | None = None
     class_name: str = "Classless"
+    status: str = "active"
     background: str = ""
     description: str = ""
     agility: int = 0
@@ -94,6 +96,7 @@ class Character:
         buffer.write(f"{self.name}\n")
         buffer.write(f"Played by: {self.discord_name}\n")
         buffer.write(f"Class: {self.class_name}\n")
+        buffer.write(f"Status: {self.status}\n")
         if self.class_template:
             buffer.write(f"Class Source: {self.class_template.source}\n")
         buffer.write(f"HP: {self.hp}/{self.max_hp}\n")
@@ -143,6 +146,7 @@ class Character:
     def sheet_lines(self) -> list[str]:
         lines = [
             f"**{self.name}** ({self.class_name})",
+            f"Status `{self.status}`",
             f"HP `{self.hp}/{self.max_hp}` | Omens `{self.omens}` | Silver `{self.silver}`",
             (
                 "Abilities "

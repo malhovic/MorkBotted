@@ -1,11 +1,12 @@
 # MorkBotted
 
-`MorkBotted` is a Discord bot MVP for running MORK BORG characters inside Discord. It stores one character per Discord user in SQLite, supports native Discord slash commands with helper fields, rolls raw dice, handles MORK BORG ability tests, and exports a text character sheet from the bot's saved data.
+`MorkBotted` is a Discord bot MVP for running MORK BORG characters inside Discord. It stores multiple characters per Discord user in SQLite, tracks an active character per server, supports native Discord slash commands with helper fields, rolls raw dice, handles MORK BORG ability tests, and exports a text character sheet from the bot's saved data.
 
 ## What it supports
 
 - Native slash-command character creation with helper fields
 - SQLite-backed character storage with automatic migration from the older JSON file
+- Multiple characters per user with per-server active character selection
 - Stored class templates and feature data for core and supplemental MORK BORG classes
 - Ability modifiers for Agility, Presence, Strength, and Toughness
 - Raw dice expressions like `!roll d6` or `!roll 2d8+1`
@@ -56,6 +57,10 @@ Character and class data are stored in `data/morkbotted.db`. If `data/characters
 ## Slash commands
 
 - `/create`
+- `/characters`
+- `/character-switch`
+- `/character-archive`
+- `/character-delete`
 - `/classes`
 - `/classinfo`
 - `/sheet`
@@ -102,6 +107,19 @@ This version updates the four core abilities:
 Optional fields can be left blank. Equipment and notes can be entered as comma-separated lists.
 
 If the class name matches one of the stored templates, the bot links the character to that class and includes class-source details in sheet exports.
+
+When you create a character inside a server, that character becomes your active character for that server automatically.
+
+## Character rosters
+
+Each Discord user can now keep multiple characters. The main play commands such as `/sheet`, `/roll`, `/gettingbetter`, `/setfield`, and `/export` act on your active character for the current server.
+
+Use these commands to manage a roster:
+
+- `/characters` to list all of your saved characters and statuses
+- `/character-switch` to choose which character is active in the current server
+- `/character-archive` to mark a character as `archived`, `dead`, `npc`, or back to `active`
+- `/character-delete` to permanently remove a character
 
 ## Legacy prefix commands
 
