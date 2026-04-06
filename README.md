@@ -8,6 +8,7 @@
 - Ability modifiers for Agility, Presence, Strength, and Toughness
 - Raw dice expressions like `!roll d6` or `!roll 2d8+1`
 - MORK BORG-style tests like `!roll strength` or `!roll presence 14`
+- `!gettingbetter` flow for post-session stat changes
 - Character sheet export as a `.txt` attachment
 - In-bot updates for stats, HP, Omens, silver, equipment, and notes
 
@@ -20,8 +21,7 @@ This MVP is built around the common MORK BORG structure from the materials you l
 - A default DR of 12 is a sensible baseline for ability checks unless the GM sets a different DR.
 - HP, Omens, silver, inventory, and short free-text notes are useful minimum fields for Discord-side play.
 
-If you want to model more of the full game later, the next layer would be class tables, weapon damage, armor tiers, broken conditions, scroll tracking, powers, and "getting better" roll automation.
-<<<<<<< HEAD
+If you want to model more of the full game later, the next layer would be class tables, weapon damage, armor tiers, broken conditions, scroll tracking, powers, and GM-facing party tools.
 
 ## Setup
 
@@ -57,6 +57,7 @@ Character data is stored in `data/characters.json`.
 - `!create`
 - `!sheet`
 - `!export`
+- `!gettingbetter`
 - `!setstat presence 2`
 - `!setfield class_name Gutterborn Scum`
 - `!setfield hp 6`
@@ -73,6 +74,20 @@ Character data is stored in `data/characters.json`.
 - `!roll 3d6+2`
 - `!roll presence`
 - `!roll toughness 14`
+
+## Getting Better flow
+
+`!gettingbetter` now supports two modes:
+
+- `auto` rolls a d6 for each ability and adjusts it automatically
+- `manual` asks whether each ability goes `up`, `down`, or `stay`
+
+This version updates the four core abilities:
+
+- Agility
+- Presence
+- Strength
+- Toughness
 
 ## Guided creation flow
 
@@ -94,9 +109,5 @@ For optional prompts, reply with `skip`. Equipment and notes can be entered as c
 ## Suggested next upgrades
 
 - Replace prefix commands with slash commands and Discord modals
-- Add a guided `!create` flow that asks questions one step at a time
 - Add class templates and random character generation
-- Add a `!gettingbetter` command that automates the advancement table you use
 - Add GM-only commands for shared party loot, calendars, and misery tracking
-=======
->>>>>>> 4d215ac2c74a85e713f47793c8b7b379eae90627

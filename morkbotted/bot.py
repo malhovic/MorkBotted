@@ -26,6 +26,10 @@ def build_character_sheet(character: Character) -> str:
     return "\n".join(character.sheet_lines())
 
 
+def clamp_ability(value: int) -> int:
+    return max(-3, min(6, value))
+
+
 async def prompt_for_response(
     bot: commands.Bot,
     ctx: commands.Context,
@@ -45,6 +49,28 @@ async def prompt_for_response(
     if optional and value.lower() == "skip":
         return None
     return value
+
+
+async def prompt_for_choice(
+    bot: commands.Bot,
+    ctx: commands.Context,
+    prompt: str,
+    choices: dict[str, str],
+    *,
+    timeout: int = CREATE_TIMEOUT_SECONDS,
+) -> str:
+    choice_list = ", ".join(f"`{key}`" for key in choices)
+    await ctx.send(f"{prompt}\nChoices: {choice_list}")
+
+    def check(message: discord.Message) -> bool:
+        return message.author.id == ctx.author.id and message.channel.id == ctx.channel.id
+
+    while True:
+        reply = await bot.wait_for("message", check=check, timeout=timeout)
+        selected = reply.content.strip().lower()
+        if selected in choices:
+            return choices[selected]
+        await ctx.send(f"Please reply with one of: {choice_list}")
 
 
 def roll_dice(expression: str) -> tuple[list[int], int, int]:
@@ -79,9 +105,7 @@ def build_bot() -> commands.Bot:
     def require_character(user: discord.abc.User) -> Character:
         character = store.get(user.id)
         if character is None:
-            raise commands.BadArgument(
-                f"No character found for {user.display_name}. Start with `{prefix}create Your Name`."
-            )
+            raise commands.BadArgument(f"No character found for {user.display_name}. Start with `{prefix}create`.")
         return character
 
     @bot.event
@@ -100,6 +124,7 @@ def build_bot() -> commands.Bot:
             f"`{prefix}create` start a guided character creation flow",
             f"`{prefix}sheet` show your current character summary",
             f"`{prefix}export` upload your character sheet as a text file",
+            f"`{prefix}gettingbetter` apply post-session stat changes in auto or manual mode",
             f"`{prefix}setstat <ability> <value>` set agility, presence, strength, or toughness",
             f"`{prefix}setfield <field> <value>` update name, class_name, background, description, hp, max_hp, omens, or silver",
             f"`{prefix}improve <field> <delta>` increment stats, HP, omens, or silver without retyping totals",
@@ -191,6 +216,92 @@ def build_bot() -> commands.Bot:
         )
         store.upsert(character)
         await ctx.send("Character created and saved.")
+        await ctx.send(build_character_sheet(character))
+
+    @bot.command(name="gettingbetter")
+    async def gettingbetter(ctx: commands.Context) -> None:
+        character = require_character(ctx.author)
+        mode_choices = {
+            "auto": "auto",
+            "automatic": "auto",
+            "a": "auto",
+            "manual": "manual",
+            "m": "manual",
+        }
+        direction_choices = {
+            "up": "up",
+            "+": "up",
+            "down": "down",
+            "-": "down",
+            "stay": "stay",
+            "same": "stay",
+            "0": "stay",
+        }
+
+        try:
+            mode = await prompt_for_choice(
+                bot,
+                ctx,
+                "Choose `Getting Better` mode. Automatic rolls a d6 for each ability. Manual lets you choose up, down, or stay for each ability.",
+                mode_choices,
+            )
+        except TimeoutError:
+            await ctx.send("`!gettingbetter` timed out before a mode was chosen. Run it again when you're ready.")
+            return
+
+        summaries: list[str] = []
+
+        if mode == "auto":
+            for ability_name in ABILITY_NAMES:
+                current_value = character.get_ability(ability_name)
+                roll = random.randint(1, 6)
+
+                if current_value <= 1:
+                    proposed_value = current_value - 1 if roll == 1 else current_value + 1
+                else:
+                    proposed_value = current_value + 1 if roll >= current_value else current_value - 1
+
+                new_value = clamp_ability(proposed_value)
+                character.set_ability(ability_name, new_value)
+
+                if new_value > current_value:
+                    summaries.append(
+                        f"`{ability_name.title()}` {current_value:+d} -> `{new_value:+d}` from `d6({roll})`"
+                    )
+                elif new_value < current_value:
+                    summaries.append(
+                        f"`{ability_name.title()}` {current_value:+d} -> `{new_value:+d}` from `d6({roll})`"
+                    )
+                else:
+                    summaries.append(
+                        f"`{ability_name.title()}` stayed at `{new_value:+d}` from `d6({roll})` because it hit a cap"
+                    )
+        else:
+            try:
+                for ability_name in ABILITY_NAMES:
+                    current_value = character.get_ability(ability_name)
+                    direction = await prompt_for_choice(
+                        bot,
+                        ctx,
+                        f"What happens to `{ability_name.title()}`? Current value: `{current_value:+d}`",
+                        direction_choices,
+                    )
+                    if direction == "up":
+                        new_value = clamp_ability(current_value + 1)
+                    elif direction == "down":
+                        new_value = clamp_ability(current_value - 1)
+                    else:
+                        new_value = current_value
+
+                    character.set_ability(ability_name, new_value)
+                    summaries.append(f"`{ability_name.title()}` {current_value:+d} -> `{new_value:+d}`")
+            except TimeoutError:
+                await ctx.send("`!gettingbetter` timed out during manual selection. Run it again when you're ready.")
+                return
+
+        character.discord_name = ctx.author.display_name
+        store.upsert(character)
+        await ctx.send(f"**{character.name}** has gotten better.\n" + "\n".join(summaries))
         await ctx.send(build_character_sheet(character))
 
     @bot.command(name="sheet")
