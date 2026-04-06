@@ -4,7 +4,7 @@
 
 ## What it supports
 
-- Character creation with persistent storage
+- Guided character creation with persistent storage
 - Ability modifiers for Agility, Presence, Strength, and Toughness
 - Raw dice expressions like `!roll d6` or `!roll 2d8+1`
 - MORK BORG-style tests like `!roll strength` or `!roll presence 14`
@@ -54,7 +54,7 @@ Character data is stored in `data/characters.json`.
 ## Commands
 
 - `!helpmb`
-- `!create Fletcher`
+- `!create`
 - `!sheet`
 - `!export`
 - `!setstat presence 2`
@@ -73,6 +73,23 @@ Character data is stored in `data/characters.json`.
 - `!roll 3d6+2`
 - `!roll presence`
 - `!roll toughness 14`
+
+## Guided creation flow
+
+`!create` now walks the player through character setup one answer at a time. The bot asks for:
+
+- Name
+- Class or archetype
+- Background
+- Description
+- Agility, Presence, Strength, and Toughness
+- HP and max HP
+- Omens
+- Silver
+- Equipment
+- Notes
+
+For optional prompts, reply with `skip`. Equipment and notes can be entered as comma-separated lists.
 
 ## Suggested next upgrades
 

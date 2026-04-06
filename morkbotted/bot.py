@@ -15,6 +15,7 @@ from morkbotted.storage import CharacterStore
 
 DICE_PATTERN = re.compile(r"^(?P<count>\d*)d(?P<sides>\d+)(?P<modifier>[+-]\d+)?$", re.IGNORECASE)
 DEFAULT_DR = 12
+CREATE_TIMEOUT_SECONDS = 180
 
 
 def parse_int(raw: str) -> int:
@@ -23,6 +24,27 @@ def parse_int(raw: str) -> int:
 
 def build_character_sheet(character: Character) -> str:
     return "\n".join(character.sheet_lines())
+
+
+async def prompt_for_response(
+    bot: commands.Bot,
+    ctx: commands.Context,
+    prompt: str,
+    *,
+    optional: bool = False,
+    timeout: int = CREATE_TIMEOUT_SECONDS,
+) -> str | None:
+    optional_hint = " Reply with `skip` to leave it blank." if optional else ""
+    await ctx.send(f"{prompt}{optional_hint}")
+
+    def check(message: discord.Message) -> bool:
+        return message.author.id == ctx.author.id and message.channel.id == ctx.channel.id
+
+    reply = await bot.wait_for("message", check=check, timeout=timeout)
+    value = reply.content.strip()
+    if optional and value.lower() == "skip":
+        return None
+    return value
 
 
 def roll_dice(expression: str) -> tuple[list[int], int, int]:
@@ -75,7 +97,7 @@ def build_bot() -> commands.Bot:
     async def helpmb(ctx: commands.Context) -> None:
         lines = [
             f"`{prefix}ping` confirm the bot is online and responding",
-            f"`{prefix}create <name>` create or reset your stored character",
+            f"`{prefix}create` start a guided character creation flow",
             f"`{prefix}sheet` show your current character summary",
             f"`{prefix}export` upload your character sheet as a text file",
             f"`{prefix}setstat <ability> <value>` set agility, presence, strength, or toughness",
@@ -91,18 +113,85 @@ def build_bot() -> commands.Bot:
         await ctx.send("\n".join(lines))
 
     @bot.command(name="create")
-    async def create(ctx: commands.Context, *, name: str) -> None:
+    async def create(ctx: commands.Context) -> None:
+        await ctx.send(
+            "Starting guided character creation. "
+            f"I'll ask a few questions and save the sheet at the end. "
+            f"If you stop replying, the flow times out after {CREATE_TIMEOUT_SECONDS // 60} minutes."
+        )
+
+        try:
+            name = await prompt_for_response(bot, ctx, "What is your character's name?")
+            class_name = await prompt_for_response(
+                bot,
+                ctx,
+                "What is their class or archetype? Use `Classless` if you want the default.",
+            )
+            background = await prompt_for_response(bot, ctx, "What background should I record?", optional=True)
+            description = await prompt_for_response(bot, ctx, "Any short description or vibe?", optional=True)
+
+            agility = parse_int(
+                await prompt_for_response(bot, ctx, "Agility modifier? Example: `-1`, `0`, `+2`.")
+            )
+            presence = parse_int(
+                await prompt_for_response(bot, ctx, "Presence modifier? Example: `-1`, `0`, `+2`.")
+            )
+            strength = parse_int(
+                await prompt_for_response(bot, ctx, "Strength modifier? Example: `-1`, `0`, `+2`.")
+            )
+            toughness = parse_int(
+                await prompt_for_response(bot, ctx, "Toughness modifier? Example: `-1`, `0`, `+2`.")
+            )
+            hp = parse_int(await prompt_for_response(bot, ctx, "Current HP?"))
+            max_hp = parse_int(await prompt_for_response(bot, ctx, "Maximum HP?"))
+            omens = parse_int(await prompt_for_response(bot, ctx, "How many Omens do they have?"))
+            silver = parse_int(await prompt_for_response(bot, ctx, "How much silver do they carry?"))
+
+            equipment_raw = await prompt_for_response(
+                bot,
+                ctx,
+                "List equipment separated by commas, or reply `skip` if you want an empty inventory.",
+                optional=True,
+            )
+            notes_raw = await prompt_for_response(
+                bot,
+                ctx,
+                "Add any notes separated by commas, or reply `skip`.",
+                optional=True,
+            )
+        except TimeoutError:
+            await ctx.send("Character creation timed out before it was finished. Run `!create` to start again.")
+            return
+        except ValueError:
+            await ctx.send(
+                "One of those numeric replies was invalid. Please use whole numbers like `-1`, `0`, or `2`, then run `!create` again."
+            )
+            return
+
+        equipment = [item.strip() for item in equipment_raw.split(",") if item.strip()] if equipment_raw else []
+        notes = [note.strip() for note in notes_raw.split(",") if note.strip()] if notes_raw else []
+
         character = Character(
             user_id=ctx.author.id,
             discord_name=ctx.author.display_name,
             name=name.strip(),
+            class_name=class_name.strip() or "Classless",
+            background=(background or "").strip(),
+            description=(description or "").strip(),
+            agility=agility,
+            presence=presence,
+            strength=strength,
+            toughness=toughness,
+            hp=hp,
+            max_hp=max_hp,
+            omens=omens,
+            silver=silver,
+            equipment=equipment,
+            notes=notes,
         )
         store.upsert(character)
-        await ctx.send(
-            "Character created.\n"
-            f"Use `{prefix}setstat <ability> <value>` and `{prefix}setfield <field> <value>` to fill it out.\n"
-            f"Then check it with `{prefix}sheet`."
-        )
+        await ctx.send("Character created and saved.")
+        await ctx.send(build_character_sheet(character))
 
     @bot.command(name="sheet")
     async def sheet(ctx: commands.Context) -> None:
