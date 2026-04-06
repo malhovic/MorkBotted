@@ -108,6 +108,6 @@ For optional prompts, reply with `skip`. Equipment and notes can be entered as c
 
 ## Suggested next upgrades
 
-- Replace prefix commands with slash commands and Discord modals
-- Add class templates and random character generation
+- Add random character generation
+- Support a more robust stored character model with SQLite so the bot can scale cleanly to a larger audience
 - Add GM-only commands for shared party loot, calendars, and misery tracking
