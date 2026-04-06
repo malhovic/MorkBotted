@@ -7,6 +7,7 @@ from io import BytesIO
 from pathlib import Path
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 
@@ -15,7 +16,26 @@ from morkbotted.storage import CharacterStore
 
 DICE_PATTERN = re.compile(r"^(?P<count>\d*)d(?P<sides>\d+)(?P<modifier>[+-]\d+)?$", re.IGNORECASE)
 DEFAULT_DR = 12
-CREATE_TIMEOUT_SECONDS = 180
+INTERACTIVE_TIMEOUT_SECONDS = 900
+ABILITY_ALIAS_SET = {"agi", "pre", "str", "tgh", "tough"}
+CREATE_FORM_TEMPLATE = """Reply with this template and replace the values after each colon.
+You can leave optional fields blank.
+
+name:
+class:
+background:
+description:
+agility:
+presence:
+strength:
+toughness:
+hp:
+max_hp:
+omens:
+silver:
+equipment:
+notes:
+"""
 
 
 def parse_int(raw: str) -> int:
@@ -69,19 +89,47 @@ def clamp_ability(value: int) -> int:
     return max(-3, min(6, value))
 
 
+async def ensure_dm_channel(user: discord.abc.User | discord.Member) -> discord.DMChannel:
+    dm_channel = user.dm_channel
+    if dm_channel is None:
+        dm_channel = await user.create_dm()
+    return dm_channel
+
+
+def parse_form_reply(reply_text: str) -> dict[str, str]:
+    data: dict[str, str] = {}
+    for line in reply_text.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        normalized_key = key.strip().lower().replace(" ", "_")
+        if normalized_key:
+            data[normalized_key] = value.strip()
+    return data
+
+
+def parse_csv_field(value: str | None) -> list[str]:
+    if not value:
+        return []
+    if value.strip().lower() == "skip":
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 async def prompt_for_response(
     bot: commands.Bot,
-    ctx: commands.Context,
+    user: discord.abc.User | discord.Member,
+    channel: discord.abc.Messageable,
     prompt: str,
     *,
     optional: bool = False,
-    timeout: int = CREATE_TIMEOUT_SECONDS,
+    timeout: int = INTERACTIVE_TIMEOUT_SECONDS,
 ) -> str | None:
     optional_hint = " Reply with `skip` to leave it blank." if optional else ""
-    await ctx.send(f"{prompt}{optional_hint}")
+    await channel.send(f"{prompt}{optional_hint}")
 
     def check(message: discord.Message) -> bool:
-        return message.author.id == ctx.author.id and message.channel.id == ctx.channel.id
+        return message.author.id == user.id and message.channel.id == channel.id
 
     reply = await bot.wait_for("message", check=check, timeout=timeout)
     value = reply.content.strip()
@@ -92,24 +140,25 @@ async def prompt_for_response(
 
 async def prompt_for_choice(
     bot: commands.Bot,
-    ctx: commands.Context,
+    user: discord.abc.User | discord.Member,
+    channel: discord.abc.Messageable,
     prompt: str,
     choices: dict[str, str],
     *,
-    timeout: int = CREATE_TIMEOUT_SECONDS,
+    timeout: int = INTERACTIVE_TIMEOUT_SECONDS,
 ) -> str:
     choice_list = ", ".join(f"`{key}`" for key in choices)
-    await ctx.send(f"{prompt}\nChoices: {choice_list}")
+    await channel.send(f"{prompt}\nChoices: {choice_list}")
 
     def check(message: discord.Message) -> bool:
-        return message.author.id == ctx.author.id and message.channel.id == ctx.channel.id
+        return message.author.id == user.id and message.channel.id == channel.id
 
     while True:
         reply = await bot.wait_for("message", check=check, timeout=timeout)
         selected = reply.content.strip().lower()
         if selected in choices:
             return choices[selected]
-        await ctx.send(f"Please reply with one of: {choice_list}")
+        await channel.send(f"Please reply with one of: {choice_list}")
 
 
 def roll_dice(expression: str) -> tuple[list[int], int, int]:
@@ -130,6 +179,84 @@ def roll_dice(expression: str) -> tuple[list[int], int, int]:
     return rolls, modifier, sum(rolls) + modifier
 
 
+def create_character_from_values(
+    store: CharacterStore,
+    *,
+    user_id: int,
+    discord_name: str,
+    name: str,
+    class_name: str,
+    background: str,
+    description: str,
+    agility: str,
+    presence: str,
+    strength: str,
+    toughness: str,
+    hp: str,
+    max_hp: str,
+    omens: str,
+    silver: str,
+    equipment: str | None,
+    notes: str | None,
+) -> Character:
+    character = Character(
+        user_id=user_id,
+        discord_name=discord_name,
+        name=name.strip(),
+        background=background.strip(),
+        description=description.strip(),
+        agility=parse_int(agility),
+        presence=parse_int(presence),
+        strength=parse_int(strength),
+        toughness=parse_int(toughness),
+        hp=parse_int(hp),
+        max_hp=parse_int(max_hp),
+        omens=parse_int(omens),
+        silver=parse_int(silver),
+        equipment=parse_csv_field(equipment),
+        notes=parse_csv_field(notes),
+    )
+    apply_class_selection(store, character, class_name)
+    return store.upsert(character)
+
+
+def run_getting_better(character: Character, mode: str, manual_choices: dict[str, str] | None = None) -> list[str]:
+    summaries: list[str] = []
+    manual_choices = manual_choices or {}
+
+    for ability_name in ABILITY_NAMES:
+        current_value = character.get_ability(ability_name)
+        if mode == "auto":
+            roll = random.randint(1, 6)
+            if current_value <= 1:
+                proposed_value = current_value - 1 if roll == 1 else current_value + 1
+            else:
+                proposed_value = current_value + 1 if roll >= current_value else current_value - 1
+
+            new_value = clamp_ability(proposed_value)
+            character.set_ability(ability_name, new_value)
+            if new_value == current_value:
+                summaries.append(
+                    f"`{ability_name.title()}` stayed at `{new_value:+d}` from `d6({roll})` because it hit a cap"
+                )
+            else:
+                summaries.append(f"`{ability_name.title()}` {current_value:+d} -> `{new_value:+d}` from `d6({roll})`")
+            continue
+
+        direction = manual_choices.get(ability_name, "stay")
+        if direction == "up":
+            new_value = clamp_ability(current_value + 1)
+        elif direction == "down":
+            new_value = clamp_ability(current_value - 1)
+        else:
+            new_value = current_value
+
+        character.set_ability(ability_name, new_value)
+        summaries.append(f"`{ability_name.title()}` {current_value:+d} -> `{new_value:+d}`")
+
+    return summaries
+
+
 def build_bot() -> commands.Bot:
     load_dotenv()
     prefix = os.getenv("COMMAND_PREFIX", "!")
@@ -141,6 +268,7 @@ def build_bot() -> commands.Bot:
 
     bot = commands.Bot(command_prefix=prefix, intents=intents, help_command=None)
     store = CharacterStore(db_path)
+    slash_synced = False
 
     def require_character(user: discord.abc.User) -> Character:
         character = store.get(user.id)
@@ -148,8 +276,25 @@ def build_bot() -> commands.Bot:
             raise commands.BadArgument(f"No character found for {user.display_name}. Start with `{prefix}create`.")
         return character
 
+    async def class_name_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        del interaction
+        current_lower = current.lower()
+        matches = [
+            app_commands.Choice(name=class_template.name, value=class_template.name)
+            for class_template in store.list_classes()
+            if not current_lower or current_lower in class_template.name.lower()
+        ]
+        return matches[:25]
+
     @bot.event
     async def on_ready() -> None:
+        nonlocal slash_synced
+        if not slash_synced:
+            await bot.tree.sync()
+            slash_synced = True
         print(f"Logged in as {bot.user} and ready to spread misery.")
 
     @bot.command(name="ping")
@@ -160,13 +305,14 @@ def build_bot() -> commands.Bot:
     @bot.command(name="helpmb")
     async def helpmb(ctx: commands.Context) -> None:
         lines = [
-            f"`{prefix}ping` confirm the bot is online and responding",
-            f"`{prefix}create` start a guided character creation flow",
-            f"`{prefix}classes` list the class templates stored in the bot database",
-            f"`{prefix}classinfo <class name>` show details for one stored class",
-            f"`{prefix}sheet` show your current character summary",
-            f"`{prefix}export` upload your character sheet as a text file",
-            f"`{prefix}gettingbetter` apply post-session stat changes in auto or manual mode",
+            "Slash commands are now the primary interface.",
+            "`/create` build or import a character with helper fields",
+            "`/gettingbetter` update stats with typed options",
+            "`/classes` list stored classes",
+            "`/classinfo` inspect one stored class",
+            "`/sheet` show your character",
+            "`/export` download your character sheet",
+            f"Legacy prefix commands still exist for now under `{prefix}`.",
             f"`{prefix}setstat <ability> <value>` set agility, presence, strength, or toughness",
             f"`{prefix}setfield <field> <value>` update name, class_name, background, description, hp, max_hp, omens, or silver",
             f"`{prefix}improve <field> <delta>` increment stats, HP, omens, or silver without retyping totals",
@@ -195,69 +341,61 @@ def build_bot() -> commands.Bot:
 
     @bot.command(name="create")
     async def create(ctx: commands.Context) -> None:
-        await ctx.send(
-            "Starting guided character creation. "
-            f"I'll ask a few questions and save the sheet at the end. "
-            f"If you stop replying, the flow times out after {CREATE_TIMEOUT_SECONDS // 60} minutes."
+        try:
+            dm_channel = await ensure_dm_channel(ctx.author)
+        except discord.Forbidden:
+            await ctx.send("I couldn't DM you. Please enable direct messages from server members and try `!create` again.")
+            return
+
+        await ctx.send("I sent you a DM with the character form. Reply there and I'll save it privately.")
+        await dm_channel.send(
+            "Fill out this character form in one message and send it back here. "
+            f"The import window stays open for {INTERACTIVE_TIMEOUT_SECONDS // 60} minutes.\n\n"
+            f"```text\n{CREATE_FORM_TEMPLATE}```"
         )
 
         try:
-            name = await prompt_for_response(bot, ctx, "What is your character's name?")
-            class_name = await prompt_for_response(
+            form_reply = await prompt_for_response(
                 bot,
-                ctx,
-                "What is their class or archetype? Reply with a stored class name or `Classless` for the default scvm path.",
-            )
-            background = await prompt_for_response(bot, ctx, "What background should I record?", optional=True)
-            description = await prompt_for_response(bot, ctx, "Any short description or vibe?", optional=True)
-
-            agility = parse_int(
-                await prompt_for_response(bot, ctx, "Agility modifier? Example: `-1`, `0`, `+2`.")
-            )
-            presence = parse_int(
-                await prompt_for_response(bot, ctx, "Presence modifier? Example: `-1`, `0`, `+2`.")
-            )
-            strength = parse_int(
-                await prompt_for_response(bot, ctx, "Strength modifier? Example: `-1`, `0`, `+2`.")
-            )
-            toughness = parse_int(
-                await prompt_for_response(bot, ctx, "Toughness modifier? Example: `-1`, `0`, `+2`.")
-            )
-            hp = parse_int(await prompt_for_response(bot, ctx, "Current HP?"))
-            max_hp = parse_int(await prompt_for_response(bot, ctx, "Maximum HP?"))
-            omens = parse_int(await prompt_for_response(bot, ctx, "How many Omens do they have?"))
-            silver = parse_int(await prompt_for_response(bot, ctx, "How much silver do they carry?"))
-
-            equipment_raw = await prompt_for_response(
-                bot,
-                ctx,
-                "List equipment separated by commas, or reply `skip` if you want an empty inventory.",
-                optional=True,
-            )
-            notes_raw = await prompt_for_response(
-                bot,
-                ctx,
-                "Add any notes separated by commas, or reply `skip`.",
-                optional=True,
+                ctx.author,
+                dm_channel,
+                "Send back the completed form.",
             )
         except TimeoutError:
-            await ctx.send("Character creation timed out before it was finished. Run `!create` to start again.")
+            await dm_channel.send("Character creation timed out before it was finished. Run `!create` again when you're ready.")
             return
-        except ValueError:
-            await ctx.send(
-                "One of those numeric replies was invalid. Please use whole numbers like `-1`, `0`, or `2`, then run `!create` again."
+
+        form_data = parse_form_reply(form_reply or "")
+        required_fields = ["name", "class", "agility", "presence", "strength", "toughness", "hp", "max_hp", "omens", "silver"]
+        missing = [field for field in required_fields if not form_data.get(field)]
+        if missing:
+            await dm_channel.send(
+                "I couldn't save that character because some required fields were missing: "
+                + ", ".join(f"`{field}`" for field in missing)
             )
             return
 
-        equipment = [item.strip() for item in equipment_raw.split(",") if item.strip()] if equipment_raw else []
-        notes = [note.strip() for note in notes_raw.split(",") if note.strip()] if notes_raw else []
+        try:
+            agility = parse_int(form_data["agility"])
+            presence = parse_int(form_data["presence"])
+            strength = parse_int(form_data["strength"])
+            toughness = parse_int(form_data["toughness"])
+            hp = parse_int(form_data["hp"])
+            max_hp = parse_int(form_data["max_hp"])
+            omens = parse_int(form_data["omens"])
+            silver = parse_int(form_data["silver"])
+        except ValueError:
+            await dm_channel.send(
+                "One of the numeric fields was invalid. Please use whole numbers like `-1`, `0`, or `2`, then run `!create` again."
+            )
+            return
 
         character = Character(
             user_id=ctx.author.id,
             discord_name=ctx.author.display_name,
-            name=name.strip(),
-            background=(background or "").strip(),
-            description=(description or "").strip(),
+            name=form_data["name"].strip(),
+            background=form_data.get("background", "").strip(),
+            description=form_data.get("description", "").strip(),
             agility=agility,
             presence=presence,
             strength=strength,
@@ -266,17 +404,27 @@ def build_bot() -> commands.Bot:
             max_hp=max_hp,
             omens=omens,
             silver=silver,
-            equipment=equipment,
-            notes=notes,
+            equipment=parse_csv_field(form_data.get("equipment")),
+            notes=parse_csv_field(form_data.get("notes")),
         )
-        apply_class_selection(store, character, class_name)
+        apply_class_selection(store, character, form_data["class"])
         store.upsert(character)
-        await ctx.send("Character created and saved.")
-        await ctx.send(build_character_sheet(character))
+        await dm_channel.send("Character created and saved.")
+        await dm_channel.send(build_character_sheet(character))
+        await ctx.send(f"Saved **{character.name}** from your DM form.")
 
     @bot.command(name="gettingbetter")
     async def gettingbetter(ctx: commands.Context) -> None:
         character = require_character(ctx.author)
+        try:
+            dm_channel = await ensure_dm_channel(ctx.author)
+        except discord.Forbidden:
+            await ctx.send(
+                "I couldn't DM you. Please enable direct messages from server members and try `!gettingbetter` again."
+            )
+            return
+
+        await ctx.send("I sent you a DM for the `Getting Better` flow so we can keep the channel clean.")
         mode_choices = {
             "auto": "auto",
             "automatic": "auto",
@@ -297,12 +445,13 @@ def build_bot() -> commands.Bot:
         try:
             mode = await prompt_for_choice(
                 bot,
-                ctx,
+                ctx.author,
+                dm_channel,
                 "Choose `Getting Better` mode. Automatic rolls a d6 for each ability. Manual lets you choose up, down, or stay for each ability.",
                 mode_choices,
             )
         except TimeoutError:
-            await ctx.send("`!gettingbetter` timed out before a mode was chosen. Run it again when you're ready.")
+            await dm_channel.send("`!gettingbetter` timed out before a mode was chosen. Run it again when you're ready.")
             return
 
         summaries: list[str] = []
@@ -338,7 +487,8 @@ def build_bot() -> commands.Bot:
                     current_value = character.get_ability(ability_name)
                     direction = await prompt_for_choice(
                         bot,
-                        ctx,
+                        ctx.author,
+                        dm_channel,
                         f"What happens to `{ability_name.title()}`? Current value: `{current_value:+d}`",
                         direction_choices,
                     )
@@ -352,13 +502,14 @@ def build_bot() -> commands.Bot:
                     character.set_ability(ability_name, new_value)
                     summaries.append(f"`{ability_name.title()}` {current_value:+d} -> `{new_value:+d}`")
             except TimeoutError:
-                await ctx.send("`!gettingbetter` timed out during manual selection. Run it again when you're ready.")
+                await dm_channel.send("`!gettingbetter` timed out during manual selection. Run it again when you're ready.")
                 return
 
         character.discord_name = ctx.author.display_name
         store.upsert(character)
-        await ctx.send(f"**{character.name}** has gotten better.\n" + "\n".join(summaries))
-        await ctx.send(build_character_sheet(character))
+        await dm_channel.send(f"**{character.name}** has gotten better.\n" + "\n".join(summaries))
+        await dm_channel.send(build_character_sheet(character))
+        await ctx.send(f"Updated **{character.name}** through DM.")
 
     @bot.command(name="sheet")
     async def sheet(ctx: commands.Context) -> None:
@@ -468,7 +619,7 @@ def build_bot() -> commands.Bot:
     @bot.command(name="roll")
     async def roll(ctx: commands.Context, target: str, dr: int = DEFAULT_DR) -> None:
         lowered = target.lower().strip()
-        if lowered in ABILITY_NAMES or lowered in {"agi", "pre", "str", "tgh", "tough"}:
+        if lowered in ABILITY_NAMES or lowered in ABILITY_ALIAS_SET:
             character = require_character(ctx.author)
             ability_name = normalize_ability_name(lowered)
             modifier = character.get_ability(ability_name)
@@ -484,6 +635,345 @@ def build_bot() -> commands.Bot:
         rolls, modifier, total = roll_dice(lowered)
         modifier_text = f" {modifier:+d}" if modifier else ""
         await ctx.send(f"Rolled `{target}` -> {rolls}{modifier_text} = **{total}**")
+
+    @bot.tree.command(name="ping", description="Check whether the bot is online and responding.")
+    async def slash_ping(interaction: discord.Interaction) -> None:
+        latency_ms = round(bot.latency * 1000)
+        await interaction.response.send_message(f"Pong. Gateway latency: `{latency_ms}ms`", ephemeral=True)
+
+    @bot.tree.command(name="classes", description="List the class templates stored in the bot database.")
+    async def slash_classes(interaction: discord.Interaction) -> None:
+        class_names = [class_template.name for class_template in store.list_classes()]
+        await interaction.response.send_message(
+            "Available classes:\n" + "\n".join(f"- {name}" for name in class_names),
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="classinfo", description="Show details for one stored class.")
+    @app_commands.describe(class_name="Stored class name")
+    @app_commands.autocomplete(class_name=class_name_autocomplete)
+    async def slash_classinfo(interaction: discord.Interaction, class_name: str) -> None:
+        class_template = store.find_class(class_name)
+        if class_template is None:
+            await interaction.response.send_message(
+                f"No stored class named `{class_name}`. Try `/classes` first.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_message(build_class_summary(class_template), ephemeral=True)
+
+    @bot.tree.command(name="sheet", description="Show your saved character sheet.")
+    async def slash_sheet(interaction: discord.Interaction) -> None:
+        character = store.get(interaction.user.id)
+        if character is None:
+            await interaction.response.send_message("No character found. Start with `/create`.", ephemeral=True)
+            return
+        await interaction.response.send_message(build_character_sheet(character), ephemeral=True)
+
+    @bot.tree.command(name="export", description="Export your saved character sheet as a text file.")
+    async def slash_export(interaction: discord.Interaction) -> None:
+        character = store.get(interaction.user.id)
+        if character is None:
+            await interaction.response.send_message("No character found. Start with `/create`.", ephemeral=True)
+            return
+        payload = BytesIO(character.export_text().encode("utf-8"))
+        await interaction.response.send_message(
+            content=f"Export for **{character.name}**",
+            file=discord.File(payload, filename=f"{character.name.replace(' ', '_').lower()}_sheet.txt"),
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="roll", description="Roll dice or roll one of your character abilities.")
+    @app_commands.describe(target="Dice expression like 2d6+1 or an ability like presence", dr="Difficulty rating")
+    async def slash_roll(interaction: discord.Interaction, target: str, dr: int = DEFAULT_DR) -> None:
+        lowered = target.lower().strip()
+        if lowered in ABILITY_NAMES or lowered in ABILITY_ALIAS_SET:
+            character = store.get(interaction.user.id)
+            if character is None:
+                await interaction.response.send_message("No character found. Start with `/create`.", ephemeral=True)
+                return
+            ability_name = normalize_ability_name(lowered)
+            modifier = character.get_ability(ability_name)
+            die = random.randint(1, 20)
+            total = die + modifier
+            outcome = "Success" if total >= dr else "Failure"
+            await interaction.response.send_message(
+                f"**{character.name}** rolls `{ability_name.title()}`: `d20({die}) {modifier:+d} = {total}` vs DR `{dr}` -> **{outcome}**"
+            )
+            return
+
+        try:
+            rolls, modifier, total = roll_dice(lowered)
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        modifier_text = f" {modifier:+d}" if modifier else ""
+        await interaction.response.send_message(f"Rolled `{target}` -> {rolls}{modifier_text} = **{total}**")
+
+    @bot.tree.command(name="create", description="Create or replace your stored character.")
+    @app_commands.describe(
+        name="Character name",
+        class_name="Stored class name or custom class label",
+        agility="Agility modifier like -1 or +2",
+        presence="Presence modifier like -1 or +2",
+        strength="Strength modifier like -1 or +2",
+        toughness="Toughness modifier like -1 or +2",
+        hp="Current HP",
+        max_hp="Maximum HP",
+        omens="Current Omens",
+        silver="Current silver",
+        background="Short background",
+        description="Short character description",
+        equipment="Comma-separated equipment",
+        notes="Comma-separated notes",
+    )
+    @app_commands.autocomplete(class_name=class_name_autocomplete)
+    async def slash_create(
+        interaction: discord.Interaction,
+        name: str,
+        class_name: str,
+        agility: str,
+        presence: str,
+        strength: str,
+        toughness: str,
+        hp: str,
+        max_hp: str,
+        omens: str,
+        silver: str,
+        background: str = "",
+        description: str = "",
+        equipment: str = "",
+        notes: str = "",
+    ) -> None:
+        try:
+            character = create_character_from_values(
+                store,
+                user_id=interaction.user.id,
+                discord_name=interaction.user.display_name,
+                name=name,
+                class_name=class_name,
+                background=background,
+                description=description,
+                agility=agility,
+                presence=presence,
+                strength=strength,
+                toughness=toughness,
+                hp=hp,
+                max_hp=max_hp,
+                omens=omens,
+                silver=silver,
+                equipment=equipment,
+                notes=notes,
+            )
+        except ValueError:
+            await interaction.response.send_message(
+                "One of the numeric fields was invalid. Use whole numbers like `-1`, `0`, or `2`.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_message(f"Character saved.\n{build_character_sheet(character)}", ephemeral=True)
+
+    @bot.tree.command(name="setstat", description="Set one of your ability modifiers.")
+    @app_commands.describe(ability="Ability name", value="Modifier like -1, 0, or +2")
+    async def slash_setstat(interaction: discord.Interaction, ability: str, value: str) -> None:
+        character = store.get(interaction.user.id)
+        if character is None:
+            await interaction.response.send_message("No character found. Start with `/create`.", ephemeral=True)
+            return
+        try:
+            normalized = normalize_ability_name(ability)
+            parsed_value = parse_int(value)
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        character.discord_name = interaction.user.display_name
+        character.set_ability(normalized, parsed_value)
+        store.upsert(character)
+        await interaction.response.send_message(
+            f"{normalized.title()} set to `{parsed_value:+d}` for **{character.name}**.",
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="setfield", description="Update one saved character field.")
+    @app_commands.describe(field_name="Field such as hp, background, or class_name", value="New value")
+    async def slash_setfield(interaction: discord.Interaction, field_name: str, value: str) -> None:
+        character = store.get(interaction.user.id)
+        if character is None:
+            await interaction.response.send_message("No character found. Start with `/create`.", ephemeral=True)
+            return
+        normalized = field_name.lower().strip()
+        if normalized not in EDITABLE_FIELDS:
+            choices = ", ".join(sorted(EDITABLE_FIELDS))
+            await interaction.response.send_message(
+                f"Unknown field '{field_name}'. Use one of: {choices}.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            character.discord_name = interaction.user.display_name
+            if normalized in {"hp", "max_hp", "omens", "silver"}:
+                setattr(character, normalized, parse_int(value))
+            elif normalized == "class_name":
+                apply_class_selection(store, character, value)
+            else:
+                setattr(character, normalized, value.strip())
+            store.upsert(character)
+        except ValueError:
+            await interaction.response.send_message("That field expects a whole number.", ephemeral=True)
+            return
+
+        await interaction.response.send_message(f"{normalized} updated for **{character.name}**.", ephemeral=True)
+
+    @bot.tree.command(name="improve", description="Adjust a saved stat or tracked field by a delta.")
+    @app_commands.describe(field_name="Ability, hp, max_hp, omens, or silver", delta="Adjustment like +1 or -2")
+    async def slash_improve(interaction: discord.Interaction, field_name: str, delta: str) -> None:
+        character = store.get(interaction.user.id)
+        if character is None:
+            await interaction.response.send_message("No character found. Start with `/create`.", ephemeral=True)
+            return
+        normalized = field_name.lower().strip()
+        try:
+            amount = parse_int(delta)
+            if normalized in ABILITY_NAMES:
+                new_value = character.get_ability(normalized) + amount
+                character.set_ability(normalized, new_value)
+            elif normalized in {"hp", "max_hp", "omens", "silver"}:
+                new_value = getattr(character, normalized) + amount
+                setattr(character, normalized, new_value)
+            else:
+                allowed = ", ".join(list(ABILITY_NAMES) + ["hp", "max_hp", "omens", "silver"])
+                await interaction.response.send_message(
+                    f"Unknown improvement field '{field_name}'. Use one of: {allowed}.",
+                    ephemeral=True,
+                )
+                return
+        except ValueError:
+            await interaction.response.send_message("The delta must be a whole number like `+1` or `-2`.", ephemeral=True)
+            return
+
+        character.discord_name = interaction.user.display_name
+        store.upsert(character)
+        await interaction.response.send_message(
+            f"{normalized} adjusted by `{amount:+d}`. New value for **{character.name}**: `{new_value:+d}`",
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="additem", description="Add one item to your equipment list.")
+    async def slash_additem(interaction: discord.Interaction, item: str) -> None:
+        character = store.get(interaction.user.id)
+        if character is None:
+            await interaction.response.send_message("No character found. Start with `/create`.", ephemeral=True)
+            return
+        character.discord_name = interaction.user.display_name
+        character.equipment.append(item.strip())
+        store.upsert(character)
+        await interaction.response.send_message(f"Added `{item.strip()}` to **{character.name}**.", ephemeral=True)
+
+    @bot.tree.command(name="removeitem", description="Remove one item from your equipment list.")
+    async def slash_removeitem(interaction: discord.Interaction, item: str) -> None:
+        character = store.get(interaction.user.id)
+        if character is None:
+            await interaction.response.send_message("No character found. Start with `/create`.", ephemeral=True)
+            return
+        target = item.strip()
+        try:
+            character.equipment.remove(target)
+        except ValueError:
+            await interaction.response.send_message(f"`{target}` was not found on your equipment list.", ephemeral=True)
+            return
+        store.upsert(character)
+        await interaction.response.send_message(f"Removed `{target}` from **{character.name}**.", ephemeral=True)
+
+    @bot.tree.command(name="addnote", description="Add one note to your character.")
+    async def slash_addnote(interaction: discord.Interaction, note: str) -> None:
+        character = store.get(interaction.user.id)
+        if character is None:
+            await interaction.response.send_message("No character found. Start with `/create`.", ephemeral=True)
+            return
+        character.discord_name = interaction.user.display_name
+        character.notes.append(note.strip())
+        store.upsert(character)
+        await interaction.response.send_message(f"Added note to **{character.name}**.", ephemeral=True)
+
+    @bot.tree.command(name="removenote", description="Remove one note from your character.")
+    async def slash_removenote(interaction: discord.Interaction, note: str) -> None:
+        character = store.get(interaction.user.id)
+        if character is None:
+            await interaction.response.send_message("No character found. Start with `/create`.", ephemeral=True)
+            return
+        target = note.strip()
+        try:
+            character.notes.remove(target)
+        except ValueError:
+            await interaction.response.send_message(f"Note `{target}` was not found.", ephemeral=True)
+            return
+        store.upsert(character)
+        await interaction.response.send_message(f"Removed note from **{character.name}**.", ephemeral=True)
+
+    @bot.tree.command(name="gettingbetter", description="Apply post-session stat changes.")
+    @app_commands.describe(
+        mode="Automatic rolls or manual stat choices",
+        agility="Manual Agility result",
+        presence="Manual Presence result",
+        strength="Manual Strength result",
+        toughness="Manual Toughness result",
+    )
+    @app_commands.choices(
+        mode=[
+            app_commands.Choice(name="Automatic", value="auto"),
+            app_commands.Choice(name="Manual", value="manual"),
+        ],
+        agility=[
+            app_commands.Choice(name="Up", value="up"),
+            app_commands.Choice(name="Down", value="down"),
+            app_commands.Choice(name="Stay", value="stay"),
+        ],
+        presence=[
+            app_commands.Choice(name="Up", value="up"),
+            app_commands.Choice(name="Down", value="down"),
+            app_commands.Choice(name="Stay", value="stay"),
+        ],
+        strength=[
+            app_commands.Choice(name="Up", value="up"),
+            app_commands.Choice(name="Down", value="down"),
+            app_commands.Choice(name="Stay", value="stay"),
+        ],
+        toughness=[
+            app_commands.Choice(name="Up", value="up"),
+            app_commands.Choice(name="Down", value="down"),
+            app_commands.Choice(name="Stay", value="stay"),
+        ],
+    )
+    async def slash_gettingbetter(
+        interaction: discord.Interaction,
+        mode: str,
+        agility: str | None = None,
+        presence: str | None = None,
+        strength: str | None = None,
+        toughness: str | None = None,
+    ) -> None:
+        character = store.get(interaction.user.id)
+        if character is None:
+            await interaction.response.send_message("No character found. Start with `/create`.", ephemeral=True)
+            return
+
+        manual_choices = None
+        if mode == "manual":
+            manual_choices = {
+                "agility": agility or "stay",
+                "presence": presence or "stay",
+                "strength": strength or "stay",
+                "toughness": toughness or "stay",
+            }
+
+        summaries = run_getting_better(character, mode, manual_choices)
+        character.discord_name = interaction.user.display_name
+        store.upsert(character)
+        await interaction.response.send_message(
+            f"**{character.name}** has gotten better.\n" + "\n".join(summaries) + "\n\n" + build_character_sheet(character),
+            ephemeral=True,
+        )
 
     @bot.event
     async def on_command_error(ctx: commands.Context, error: commands.CommandError) -> None:
