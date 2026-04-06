@@ -1,0 +1,26 @@
+
+--- PAGE 1 ---
+HIT POINTS
+Omens
+Silver
+Max
+Weapon
+Weapon
+Armor
+Name
+Equipment
+Current
+Description
+Miseries
+Class
+-d2
+1
+-d4
+2
+-d6
+3
+Presence DR12, or -d2 HP and no Powers for 1 hr.
+Strength+8 items or DR+2  
+on Agility/Strength tests
+1 2 3 4 5 6
+Maximum damage, Reroll, –d6 damage, DR –4, No Crit/Fumble

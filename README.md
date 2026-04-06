@@ -1,10 +1,12 @@
 # MorkBotted
 
-`MorkBotted` is a Discord bot MVP for running MORK BORG characters inside Discord. It stores one character per Discord user, rolls raw dice, handles MORK BORG ability tests like `!roll presence`, and exports a text character sheet from the bot's saved data.
+`MorkBotted` is a Discord bot MVP for running MORK BORG characters inside Discord. It stores one character per Discord user in SQLite, rolls raw dice, handles MORK BORG ability tests like `!roll presence`, and exports a text character sheet from the bot's saved data.
 
 ## What it supports
 
 - Guided character creation with persistent storage
+- SQLite-backed character storage with automatic migration from the older JSON file
+- Stored class templates and feature data for core and supplemental MORK BORG classes
 - Ability modifiers for Agility, Presence, Strength, and Toughness
 - Raw dice expressions like `!roll d6` or `!roll 2d8+1`
 - MORK BORG-style tests like `!roll strength` or `!roll presence 14`
@@ -21,7 +23,7 @@ This MVP is built around the common MORK BORG structure from the materials you l
 - A default DR of 12 is a sensible baseline for ability checks unless the GM sets a different DR.
 - HP, Omens, silver, inventory, and short free-text notes are useful minimum fields for Discord-side play.
 
-If you want to model more of the full game later, the next layer would be class tables, weapon damage, armor tiers, broken conditions, scroll tracking, powers, and GM-facing party tools.
+The bot now uses the attached class PDFs and rules references to store class notes, feature tables, and source metadata in the database so character sheets can grow into richer formatting later.
 
 ## Setup
 
@@ -41,7 +43,7 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-5. Edit `.env` and set `DISCORD_TOKEN` to your Discord bot token.
+5. Edit `.env` and set `DISCORD_TOKEN` to your Discord bot token. `DB_PATH` defaults to `data/morkbotted.db`.
 6. In the Discord developer portal, enable the `MESSAGE CONTENT INTENT` for your bot.
 7. Run the bot:
 
@@ -49,12 +51,14 @@ Copy-Item .env.example .env
 python bot.py
 ```
 
-Character data is stored in `data/characters.json`.
+Character and class data are stored in `data/morkbotted.db`. If `data/characters.json` exists from an older version, the bot migrates it into SQLite the first time the new store starts.
 
 ## Commands
 
 - `!helpmb`
 - `!create`
+- `!classes`
+- `!classinfo Pale One`
 - `!sheet`
 - `!export`
 - `!gettingbetter`
@@ -106,8 +110,10 @@ This version updates the four core abilities:
 
 For optional prompts, reply with `skip`. Equipment and notes can be entered as comma-separated lists.
 
+If the class name matches one of the stored templates, the bot links the character to that class and includes class-source details in sheet exports.
+
 ## Suggested next upgrades
 
 - Add random character generation
-- Support a more robust stored character model with SQLite so the bot can scale cleanly to a larger audience
+- Expand the stored character model further with dedicated tables for powers, scrolls, active class rolls, and session history
 - Add GM-only commands for shared party loot, calendars, and misery tracking

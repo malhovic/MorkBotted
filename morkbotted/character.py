@@ -31,10 +31,36 @@ EDITABLE_FIELDS = {
 
 
 @dataclass
+class ClassFeature:
+    category: str
+    name: str
+    description: str
+    roll_label: str = ""
+    id: int | None = None
+
+
+@dataclass
+class ClassTemplate:
+    slug: str
+    name: str
+    source: str
+    description: str
+    starting_silver: str = ""
+    omen_die: str = ""
+    hp_formula: str = ""
+    ability_summary: str = ""
+    equipment_summary: str = ""
+    notes: str = ""
+    features: list[ClassFeature] = field(default_factory=list)
+    id: int | None = None
+
+
+@dataclass
 class Character:
     user_id: int
     discord_name: str
     name: str = "Unnamed Scvm"
+    class_id: int | None = None
     class_name: str = "Classless"
     background: str = ""
     description: str = ""
@@ -48,6 +74,7 @@ class Character:
     silver: int = 0
     equipment: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    class_template: ClassTemplate | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -67,6 +94,8 @@ class Character:
         buffer.write(f"{self.name}\n")
         buffer.write(f"Played by: {self.discord_name}\n")
         buffer.write(f"Class: {self.class_name}\n")
+        if self.class_template:
+            buffer.write(f"Class Source: {self.class_template.source}\n")
         buffer.write(f"HP: {self.hp}/{self.max_hp}\n")
         buffer.write(f"Omens: {self.omens}\n")
         buffer.write(f"Silver: {self.silver}\n")
@@ -79,6 +108,19 @@ class Character:
         buffer.write(f"{self.background or 'None recorded.'}\n")
         buffer.write("\nDescription\n")
         buffer.write(f"{self.description or 'None recorded.'}\n")
+        if self.class_template:
+            buffer.write("\nClass Notes\n")
+            buffer.write(f"{self.class_template.description}\n")
+            if self.class_template.ability_summary:
+                buffer.write(f"Abilities: {self.class_template.ability_summary}\n")
+            if self.class_template.equipment_summary:
+                buffer.write(f"Equipment: {self.class_template.equipment_summary}\n")
+            if self.class_template.hp_formula:
+                buffer.write(f"HP Formula: {self.class_template.hp_formula}\n")
+            if self.class_template.omen_die:
+                buffer.write(f"Omen Die: {self.class_template.omen_die}\n")
+            if self.class_template.notes:
+                buffer.write(f"Notes: {self.class_template.notes}\n")
         buffer.write("\nEquipment\n")
         if self.equipment:
             for item in self.equipment:
@@ -91,10 +133,15 @@ class Character:
                 buffer.write(f"- {note}\n")
         else:
             buffer.write("- None recorded.\n")
+        if self.class_template and self.class_template.features:
+            buffer.write("\nClass Features\n")
+            for feature in self.class_template.features:
+                prefix = f"[{feature.roll_label}] " if feature.roll_label else ""
+                buffer.write(f"- {prefix}{feature.name}: {feature.description}\n")
         return buffer.getvalue().strip()
 
     def sheet_lines(self) -> list[str]:
-        return [
+        lines = [
             f"**{self.name}** ({self.class_name})",
             f"HP `{self.hp}/{self.max_hp}` | Omens `{self.omens}` | Silver `{self.silver}`",
             (
@@ -109,6 +156,14 @@ class Character:
             "Equipment: " + (", ".join(self.equipment) if self.equipment else "None recorded."),
             "Notes: " + (" | ".join(self.notes) if self.notes else "None recorded."),
         ]
+        if self.class_template:
+            lines.append(f"Class Source: {self.class_template.source}")
+            if self.class_template.features:
+                feature_names = ", ".join(feature.name for feature in self.class_template.features[:3])
+                if len(self.class_template.features) > 3:
+                    feature_names += ", ..."
+                lines.append(f"Class Features: {feature_names}")
+        return lines
 
 
 def normalize_ability_name(raw: str) -> str:

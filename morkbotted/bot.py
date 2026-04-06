@@ -10,7 +10,7 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
-from morkbotted.character import ABILITY_NAMES, EDITABLE_FIELDS, Character, normalize_ability_name
+from morkbotted.character import ABILITY_NAMES, EDITABLE_FIELDS, Character, ClassTemplate, normalize_ability_name
 from morkbotted.storage import CharacterStore
 
 DICE_PATTERN = re.compile(r"^(?P<count>\d*)d(?P<sides>\d+)(?P<modifier>[+-]\d+)?$", re.IGNORECASE)
@@ -24,6 +24,45 @@ def parse_int(raw: str) -> int:
 
 def build_character_sheet(character: Character) -> str:
     return "\n".join(character.sheet_lines())
+
+
+def build_class_summary(class_template: ClassTemplate) -> str:
+    lines = [
+        f"**{class_template.name}**",
+        f"Source: {class_template.source}",
+        class_template.description,
+    ]
+    if class_template.starting_silver:
+        lines.append(f"Starting Silver: {class_template.starting_silver}")
+    if class_template.omen_die:
+        lines.append(f"Omen Die: {class_template.omen_die}")
+    if class_template.hp_formula:
+        lines.append(f"HP Formula: {class_template.hp_formula}")
+    if class_template.ability_summary:
+        lines.append(f"Ability Notes: {class_template.ability_summary}")
+    if class_template.equipment_summary:
+        lines.append(f"Equipment Notes: {class_template.equipment_summary}")
+    if class_template.notes:
+        lines.append(f"Extra Notes: {class_template.notes}")
+    if class_template.features:
+        lines.append("Features:")
+        for feature in class_template.features:
+            prefix = f"[{feature.roll_label}] " if feature.roll_label else ""
+            lines.append(f"- {prefix}{feature.name}: {feature.description}")
+    return "\n".join(lines)
+
+
+def apply_class_selection(store: CharacterStore, character: Character, raw_class_name: str) -> Character:
+    resolved_class = store.find_class(raw_class_name)
+    if resolved_class:
+        character.class_id = resolved_class.id
+        character.class_name = resolved_class.name
+        character.class_template = resolved_class
+    else:
+        character.class_id = None
+        character.class_name = raw_class_name.strip() or "Classless"
+        character.class_template = None
+    return character
 
 
 def clamp_ability(value: int) -> int:
@@ -95,12 +134,13 @@ def build_bot() -> commands.Bot:
     load_dotenv()
     prefix = os.getenv("COMMAND_PREFIX", "!")
     data_dir = Path(os.getenv("DATA_DIR", "data"))
+    db_path = Path(os.getenv("DB_PATH", str(data_dir / "morkbotted.db")))
 
     intents = discord.Intents.default()
     intents.message_content = True
 
     bot = commands.Bot(command_prefix=prefix, intents=intents, help_command=None)
-    store = CharacterStore(data_dir)
+    store = CharacterStore(db_path)
 
     def require_character(user: discord.abc.User) -> Character:
         character = store.get(user.id)
@@ -122,6 +162,8 @@ def build_bot() -> commands.Bot:
         lines = [
             f"`{prefix}ping` confirm the bot is online and responding",
             f"`{prefix}create` start a guided character creation flow",
+            f"`{prefix}classes` list the class templates stored in the bot database",
+            f"`{prefix}classinfo <class name>` show details for one stored class",
             f"`{prefix}sheet` show your current character summary",
             f"`{prefix}export` upload your character sheet as a text file",
             f"`{prefix}gettingbetter` apply post-session stat changes in auto or manual mode",
@@ -137,6 +179,20 @@ def build_bot() -> commands.Bot:
         ]
         await ctx.send("\n".join(lines))
 
+    @bot.command(name="classes")
+    async def classes(ctx: commands.Context) -> None:
+        class_names = [class_template.name for class_template in store.list_classes()]
+        await ctx.send("Available classes:\n" + "\n".join(f"- {name}" for name in class_names))
+
+    @bot.command(name="classinfo")
+    async def classinfo(ctx: commands.Context, *, class_name: str) -> None:
+        class_template = store.find_class(class_name)
+        if class_template is None:
+            raise commands.BadArgument(
+                f"No stored class named `{class_name}`. Try `{prefix}classes` to see available options."
+            )
+        await ctx.send(build_class_summary(class_template))
+
     @bot.command(name="create")
     async def create(ctx: commands.Context) -> None:
         await ctx.send(
@@ -150,7 +206,7 @@ def build_bot() -> commands.Bot:
             class_name = await prompt_for_response(
                 bot,
                 ctx,
-                "What is their class or archetype? Use `Classless` if you want the default.",
+                "What is their class or archetype? Reply with a stored class name or `Classless` for the default scvm path.",
             )
             background = await prompt_for_response(bot, ctx, "What background should I record?", optional=True)
             description = await prompt_for_response(bot, ctx, "Any short description or vibe?", optional=True)
@@ -200,7 +256,6 @@ def build_bot() -> commands.Bot:
             user_id=ctx.author.id,
             discord_name=ctx.author.display_name,
             name=name.strip(),
-            class_name=class_name.strip() or "Classless",
             background=(background or "").strip(),
             description=(description or "").strip(),
             agility=agility,
@@ -214,6 +269,7 @@ def build_bot() -> commands.Bot:
             equipment=equipment,
             notes=notes,
         )
+        apply_class_selection(store, character, class_name)
         store.upsert(character)
         await ctx.send("Character created and saved.")
         await ctx.send(build_character_sheet(character))
@@ -339,6 +395,8 @@ def build_bot() -> commands.Bot:
         character.discord_name = ctx.author.display_name
         if normalized in {"hp", "max_hp", "omens", "silver"}:
             setattr(character, normalized, parse_int(value))
+        elif normalized == "class_name":
+            apply_class_selection(store, character, value)
         else:
             setattr(character, normalized, value.strip())
 
