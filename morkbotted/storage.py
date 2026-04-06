@@ -158,33 +158,58 @@ class CharacterStore:
 
     def _seed_classes(self) -> None:
         with self._connect() as connection:
-            existing_count = connection.execute("SELECT COUNT(*) FROM classes").fetchone()[0]
-            if existing_count:
-                return
-
             for class_payload in CLASS_SEED_DATA:
-                cursor = connection.execute(
-                    """
-                    INSERT INTO classes (
-                        slug, name, source, description, starting_silver, omen_die,
-                        hp_formula, ability_summary, equipment_summary, notes
+                existing = connection.execute(
+                    "SELECT id FROM classes WHERE slug = ?",
+                    (class_payload["slug"],),
+                ).fetchone()
+                if existing is None:
+                    cursor = connection.execute(
+                        """
+                        INSERT INTO classes (
+                            slug, name, source, description, starting_silver, omen_die,
+                            hp_formula, ability_summary, equipment_summary, notes
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            class_payload["slug"],
+                            class_payload["name"],
+                            class_payload["source"],
+                            class_payload["description"],
+                            class_payload.get("starting_silver"),
+                            class_payload.get("omen_die"),
+                            class_payload.get("hp_formula"),
+                            class_payload.get("ability_summary"),
+                            class_payload.get("equipment_summary"),
+                            class_payload.get("notes"),
+                        ),
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        class_payload["slug"],
-                        class_payload["name"],
-                        class_payload["source"],
-                        class_payload["description"],
-                        class_payload.get("starting_silver"),
-                        class_payload.get("omen_die"),
-                        class_payload.get("hp_formula"),
-                        class_payload.get("ability_summary"),
-                        class_payload.get("equipment_summary"),
-                        class_payload.get("notes"),
-                    ),
-                )
-                class_id = cursor.lastrowid
+                    class_id = cursor.lastrowid
+                else:
+                    class_id = existing["id"]
+                    connection.execute(
+                        """
+                        UPDATE classes
+                        SET name = ?, source = ?, description = ?, starting_silver = ?, omen_die = ?,
+                            hp_formula = ?, ability_summary = ?, equipment_summary = ?, notes = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            class_payload["name"],
+                            class_payload["source"],
+                            class_payload["description"],
+                            class_payload.get("starting_silver"),
+                            class_payload.get("omen_die"),
+                            class_payload.get("hp_formula"),
+                            class_payload.get("ability_summary"),
+                            class_payload.get("equipment_summary"),
+                            class_payload.get("notes"),
+                            class_id,
+                        ),
+                    )
+                    connection.execute("DELETE FROM class_features WHERE class_id = ?", (class_id,))
+
                 for position, feature in enumerate(class_payload.get("features", []), start=1):
                     connection.execute(
                         """

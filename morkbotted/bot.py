@@ -12,6 +12,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 from morkbotted.character import ABILITY_NAMES, EDITABLE_FIELDS, Character, ClassTemplate, normalize_ability_name
+from morkbotted.generator import generate_random_character
 from morkbotted.storage import CharacterStore
 
 DICE_PATTERN = re.compile(r"^(?P<count>\d*)d(?P<sides>\d+)(?P<modifier>[+-]\d+)?$", re.IGNORECASE)
@@ -344,6 +345,7 @@ def build_bot() -> commands.Bot:
         lines = [
             "Slash commands are now the primary interface.",
             "`/create` build or import a character with helper fields",
+            "`/scvmbirth` generate a ready-to-play random character",
             "`/characters` list your roster",
             "`/character-switch` set the active character for this server",
             "`/character-archive` mark a character archived, dead, npc, or active",
@@ -784,6 +786,35 @@ def build_bot() -> commands.Bot:
             return
         store.delete_character(selected.id)
         await interaction.response.send_message(f"Deleted character **{selected.name}**.", ephemeral=True)
+
+    @bot.tree.command(name="scvmbirth", description="Generate a ready-to-play random character.")
+    @app_commands.describe(class_name="Optional class to force instead of rolling from the catalog")
+    @app_commands.autocomplete(class_name=class_name_autocomplete)
+    async def slash_scvmbirth(interaction: discord.Interaction, class_name: str | None = None) -> None:
+        if class_name:
+            class_template = store.find_class(class_name)
+            if class_template is None:
+                await interaction.response.send_message(
+                    f"No stored class named `{class_name}`. Try `/classes` first.",
+                    ephemeral=True,
+                )
+                return
+        else:
+            classes = store.list_classes()
+            class_template = random.choice(classes)
+
+        character = generate_random_character(
+            class_template=class_template,
+            user_id=interaction.user.id,
+            discord_name=interaction.user.display_name,
+        )
+        character = store.upsert(character)
+        if interaction.guild_id is not None and character.id is not None:
+            store.set_active_character(interaction.guild_id, interaction.user.id, character.id)
+        await interaction.response.send_message(
+            f"Scvm birthed.\n{build_character_sheet(character)}",
+            ephemeral=True,
+        )
 
     @bot.tree.command(name="sheet", description="Show your saved character sheet.")
     async def slash_sheet(interaction: discord.Interaction) -> None:

@@ -5,9 +5,10 @@
 ## What it supports
 
 - Native slash-command character creation with helper fields
+- One-button random character generation with `/scvmbirth`
 - SQLite-backed character storage with automatic migration from the older JSON file
 - Multiple characters per user with per-server active character selection
-- Stored class templates and feature data for core and supplemental MORK BORG classes
+- Stored class templates and feature data for core and supplemental MORK BORG classes, including Dire Hunter
 - Ability modifiers for Agility, Presence, Strength, and Toughness
 - Raw dice expressions like `!roll d6` or `!roll 2d8+1`
 - MORK BORG-style tests like `!roll strength` or `!roll presence 14`
@@ -53,10 +54,12 @@ python bot.py
 ```
 
 Character and class data are stored in `data/morkbotted.db`. If `data/characters.json` exists from an older version, the bot migrates it into SQLite the first time the new store starts.
+New class seed data is also backfilled into existing databases on startup.
 
 ## Slash commands
 
 - `/create`
+- `/scvmbirth`
 - `/characters`
 - `/character-switch`
 - `/character-archive`
@@ -107,6 +110,21 @@ This version updates the four core abilities:
 Optional fields can be left blank. Equipment and notes can be entered as comma-separated lists.
 
 If the class name matches one of the stored templates, the bot links the character to that class and includes class-source details in sheet exports.
+
+## Random character generation
+
+`/scvmbirth` creates a ready-to-play entry-level character in one step. By default it rolls from the full stored class catalog, including community classes, but you can also pass a specific class name if you want to force the result.
+
+Generated characters include:
+
+- A random name
+- A class from the stored catalog
+- Rolled ability modifiers using the MORK BORG ability table
+- HP, Omens, and silver based on the chosen class
+- Rolled weapon and armor
+- Starter equipment and class-feature notes
+
+When used inside a server, the generated character becomes your active character there automatically.
 
 When you create a character inside a server, that character becomes your active character for that server automatically.
 
