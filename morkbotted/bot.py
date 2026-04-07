@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import random
 import re
+import logging
 from io import BytesIO
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from morkbotted.storage import CharacterStore
 DICE_PATTERN = re.compile(r"^(?P<count>\d*)d(?P<sides>\d+)(?P<modifier>[+-]\d+)?$", re.IGNORECASE)
 DEFAULT_DR = 12
 INTERACTIVE_TIMEOUT_SECONDS = 900
+DISCORD_MESSAGE_LIMIT = 2000
 ABILITY_ALIAS_SET = {"agi", "pre", "str", "tgh", "tough"}
 CREATE_FORM_TEMPLATE = """Reply with this template and replace the values after each colon.
 You can leave optional fields blank.
@@ -37,6 +39,8 @@ silver:
 equipment:
 notes:
 """
+
+logger = logging.getLogger(__name__)
 
 
 def parse_int(raw: str) -> int:
@@ -71,6 +75,29 @@ def build_class_summary(class_template: ClassTemplate) -> str:
             prefix = f"[{feature.roll_label}] " if feature.roll_label else ""
             lines.append(f"- {prefix}{feature.name}: {feature.description}")
     return "\n".join(lines)
+
+
+async def send_interaction_text(
+    interaction: discord.Interaction,
+    content: str,
+    *,
+    ephemeral: bool = False,
+    filename: str = "response.txt",
+) -> None:
+    if len(content) <= DISCORD_MESSAGE_LIMIT:
+        if interaction.response.is_done():
+            await interaction.followup.send(content, ephemeral=ephemeral)
+        else:
+            await interaction.response.send_message(content, ephemeral=ephemeral)
+        return
+
+    payload = BytesIO(content.encode("utf-8"))
+    discord_file = discord.File(payload, filename=filename)
+    message = "The response was too long for a Discord message, so I attached it as a text file."
+    if interaction.response.is_done():
+        await interaction.followup.send(message, file=discord_file, ephemeral=ephemeral)
+    else:
+        await interaction.response.send_message(message, file=discord_file, ephemeral=ephemeral)
 
 
 def apply_class_selection(store: CharacterStore, character: Character, raw_class_name: str) -> Character:
@@ -275,6 +302,10 @@ def ensure_guild_id(guild: discord.Guild | None) -> int:
 
 
 def build_bot() -> commands.Bot:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    )
     load_dotenv()
     prefix = os.getenv("COMMAND_PREFIX", "!")
     data_dir = Path(os.getenv("DATA_DIR", "data"))
@@ -798,16 +829,23 @@ def build_bot() -> commands.Bot:
     @app_commands.describe(class_name="Optional class to force instead of rolling from the catalog")
     @app_commands.autocomplete(class_name=class_name_autocomplete)
     async def slash_scvmbirth(interaction: discord.Interaction, class_name: str | None = None) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
         if class_name:
             class_template = store.find_class(class_name)
             if class_template is None:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     f"No stored class named `{class_name}`. Try `/classes` first.",
                     ephemeral=True,
                 )
                 return
         else:
             classes = store.list_classes()
+            if not classes:
+                await interaction.followup.send(
+                    "No stored classes are available yet, so I can't generate a character.",
+                    ephemeral=True,
+                )
+                return
             class_template = random.choice(classes)
 
         character = generate_random_character(
@@ -818,9 +856,11 @@ def build_bot() -> commands.Bot:
         character = store.upsert(character)
         if interaction.guild_id is not None and character.id is not None:
             store.set_active_character(interaction.guild_id, interaction.user.id, character.id)
-        await interaction.response.send_message(
+        await send_interaction_text(
+            interaction,
             f"Scvm birthed.\n{build_character_sheet(character)}",
             ephemeral=True,
+            filename="scvmbirth.txt",
         )
 
     @bot.tree.command(name="sheet", description="Show your saved character sheet.")
@@ -1149,6 +1189,18 @@ def build_bot() -> commands.Bot:
             await ctx.send(str(error))
             return
         raise error
+
+    @bot.tree.error
+    async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
+        command_name = interaction.command.qualified_name if interaction.command else "unknown"
+        logger.exception("Slash command '%s' failed", command_name, exc_info=error)
+
+        message = "That slash command failed. Check the bot console for the traceback."
+        if interaction.response.is_done():
+            await interaction.followup.send(message, ephemeral=True)
+        else:
+            await interaction.response.send_message(message, ephemeral=True)
+
 
     return bot
 
