@@ -15,6 +15,7 @@ class CharacterStore:
         self._initialize_schema()
         self._seed_classes()
         self._migrate_single_character_schema()
+        self._repair_character_foreign_keys()
         self._maybe_migrate_json()
 
     def _connect(self) -> sqlite3.Connection:
@@ -26,6 +27,10 @@ class CharacterStore:
     def _table_columns(self, connection: sqlite3.Connection, table_name: str) -> set[str]:
         rows = connection.execute(f"PRAGMA table_info({table_name})").fetchall()
         return {row["name"] for row in rows}
+
+    def _foreign_key_targets(self, connection: sqlite3.Connection, table_name: str) -> set[str]:
+        rows = connection.execute(f"PRAGMA foreign_key_list({table_name})").fetchall()
+        return {row["table"] for row in rows}
 
     def _initialize_schema(self) -> None:
         with self._connect() as connection:
@@ -154,6 +159,68 @@ class CharacterStore:
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_characters_owner_name ON characters(user_id, lower(name))"
+            )
+
+    def _repair_character_foreign_keys(self) -> None:
+        dependent_tables = ("character_equipment", "character_notes", "active_characters")
+
+        with self._connect() as connection:
+            repair_needed = any(
+                "characters_old" in self._foreign_key_targets(connection, table_name)
+                for table_name in dependent_tables
+            )
+            if not repair_needed:
+                return
+
+            connection.execute("PRAGMA foreign_keys = OFF")
+            try:
+                connection.executescript(
+                    """
+                    ALTER TABLE character_equipment RENAME TO character_equipment_old;
+                    CREATE TABLE character_equipment (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        character_id INTEGER NOT NULL,
+                        item_text TEXT NOT NULL,
+                        position INTEGER NOT NULL,
+                        FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+                    );
+                    INSERT INTO character_equipment (id, character_id, item_text, position)
+                    SELECT id, character_id, item_text, position
+                    FROM character_equipment_old;
+                    DROP TABLE character_equipment_old;
+
+                    ALTER TABLE character_notes RENAME TO character_notes_old;
+                    CREATE TABLE character_notes (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        character_id INTEGER NOT NULL,
+                        note_text TEXT NOT NULL,
+                        position INTEGER NOT NULL,
+                        FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+                    );
+                    INSERT INTO character_notes (id, character_id, note_text, position)
+                    SELECT id, character_id, note_text, position
+                    FROM character_notes_old;
+                    DROP TABLE character_notes_old;
+
+                    ALTER TABLE active_characters RENAME TO active_characters_old;
+                    CREATE TABLE active_characters (
+                        guild_id INTEGER NOT NULL,
+                        user_id INTEGER NOT NULL,
+                        character_id INTEGER NOT NULL,
+                        PRIMARY KEY (guild_id, user_id),
+                        FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+                    );
+                    INSERT INTO active_characters (guild_id, user_id, character_id)
+                    SELECT guild_id, user_id, character_id
+                    FROM active_characters_old;
+                    DROP TABLE active_characters_old;
+                    """
+                )
+            finally:
+                connection.execute("PRAGMA foreign_keys = ON")
+
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_active_characters_unique ON active_characters(guild_id, user_id)"
             )
 
     def _seed_classes(self) -> None:
