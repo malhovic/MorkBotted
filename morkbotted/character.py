@@ -136,11 +136,6 @@ class Character:
                 buffer.write(f"- {note}\n")
         else:
             buffer.write("- None recorded.\n")
-        if self.class_template and self.class_template.features:
-            buffer.write("\nClass Features\n")
-            for feature in self.class_template.features:
-                prefix = f"[{feature.roll_label}] " if feature.roll_label else ""
-                buffer.write(f"- {prefix}{feature.name}: {feature.description}\n")
         return buffer.getvalue().strip()
 
     def sheet_lines(self) -> list[str]:
@@ -162,11 +157,6 @@ class Character:
         ]
         if self.class_template:
             lines.append(f"Class Source: {self.class_template.source}")
-            if self.class_template.features:
-                feature_names = ", ".join(feature.name for feature in self.class_template.features[:3])
-                if len(self.class_template.features) > 3:
-                    feature_names += ", ..."
-                lines.append(f"Class Features: {feature_names}")
         return lines
 
 
