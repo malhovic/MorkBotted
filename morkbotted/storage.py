@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -10,6 +11,14 @@ from typing import Iterator
 from morkbotted.character import Character, ClassFeature, ClassTemplate
 from morkbotted.class_data import CLASS_SEED_DATA
 from morkbotted.security import MAX_EQUIPMENT_ITEMS, MAX_NOTES, validate_text, validate_text_list
+
+
+SLUG_PATTERN = re.compile(r"[^a-z0-9]+")
+
+
+def make_slug(value: str) -> str:
+    slug = SLUG_PATTERN.sub("-", value.lower()).strip("-")
+    return slug or "homebrew"
 
 
 @dataclass
@@ -36,8 +45,9 @@ class CharacterStore:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize_schema()
-        self._seed_classes()
         self._migrate_single_character_schema()
+        self._migrate_homebrew_class_schema()
+        self._seed_classes()
         self._repair_character_foreign_keys()
         self._maybe_migrate_json()
 
@@ -69,8 +79,9 @@ class CharacterStore:
                 """
                 CREATE TABLE IF NOT EXISTS classes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    slug TEXT NOT NULL UNIQUE,
-                    name TEXT NOT NULL UNIQUE,
+                    guild_id INTEGER,
+                    slug TEXT NOT NULL,
+                    name TEXT NOT NULL,
                     source TEXT NOT NULL,
                     description TEXT NOT NULL,
                     starting_silver TEXT,
@@ -83,13 +94,25 @@ class CharacterStore:
 
                 CREATE TABLE IF NOT EXISTS class_features (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    class_id INTEGER NOT NULL,
+                    guild_id INTEGER,
+                    class_id INTEGER,
+                    reusable INTEGER NOT NULL DEFAULT 0,
                     category TEXT NOT NULL,
                     roll_label TEXT,
                     name TEXT NOT NULL,
                     description TEXT NOT NULL,
                     position INTEGER NOT NULL,
                     FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS class_feature_links (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    class_id INTEGER NOT NULL,
+                    class_feature_id INTEGER NOT NULL,
+                    position INTEGER NOT NULL,
+                    UNIQUE (class_id, class_feature_id),
+                    FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
+                    FOREIGN KEY (class_feature_id) REFERENCES class_features(id) ON DELETE CASCADE
                 );
 
                 CREATE TABLE IF NOT EXISTS characters (
@@ -169,6 +192,181 @@ class CharacterStore:
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
                 """
+            )
+
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_classes_global_slug ON classes(lower(slug)) WHERE guild_id IS NULL"
+            )
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_classes_global_name ON classes(lower(name)) WHERE guild_id IS NULL"
+            )
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_classes_guild_slug ON classes(guild_id, lower(slug)) WHERE guild_id IS NOT NULL"
+            )
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_classes_guild_name ON classes(guild_id, lower(name)) WHERE guild_id IS NOT NULL"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_class_features_guild ON class_features(guild_id, lower(name), id)"
+            )
+
+    def _migrate_homebrew_class_schema(self) -> None:
+        with self._connect() as connection:
+            class_columns = self._table_columns(connection, "classes")
+            feature_info = connection.execute("PRAGMA table_info(class_features)").fetchall()
+            feature_columns = {row["name"] for row in feature_info}
+            feature_class_id_is_required = any(row["name"] == "class_id" and row["notnull"] for row in feature_info)
+
+            connection.execute("PRAGMA foreign_keys = OFF")
+            try:
+                if "guild_id" not in class_columns:
+                    connection.executescript(
+                        """
+                        ALTER TABLE classes RENAME TO classes_old;
+                        CREATE TABLE classes (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            guild_id INTEGER,
+                            slug TEXT NOT NULL,
+                            name TEXT NOT NULL,
+                            source TEXT NOT NULL,
+                            description TEXT NOT NULL,
+                            starting_silver TEXT,
+                            omen_die TEXT,
+                            hp_formula TEXT,
+                            ability_summary TEXT,
+                            equipment_summary TEXT,
+                            notes TEXT
+                        );
+                        INSERT INTO classes (
+                            id, guild_id, slug, name, source, description, starting_silver, omen_die,
+                            hp_formula, ability_summary, equipment_summary, notes
+                        )
+                        SELECT
+                            id, NULL, slug, name, source, description, starting_silver, omen_die,
+                            hp_formula, ability_summary, equipment_summary, notes
+                        FROM classes_old;
+                        DROP TABLE classes_old;
+                        """
+                    )
+
+                if {"guild_id", "reusable"} - feature_columns or feature_class_id_is_required:
+                    connection.executescript(
+                        """
+                        ALTER TABLE class_features RENAME TO class_features_old;
+                        CREATE TABLE class_features (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            guild_id INTEGER,
+                            class_id INTEGER,
+                            reusable INTEGER NOT NULL DEFAULT 0,
+                            category TEXT NOT NULL,
+                            roll_label TEXT,
+                            name TEXT NOT NULL,
+                            description TEXT NOT NULL,
+                            position INTEGER NOT NULL,
+                            FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
+                        );
+                        INSERT INTO class_features (
+                            id, guild_id, class_id, reusable, category, roll_label, name, description, position
+                        )
+                        SELECT
+                            id, NULL, class_id, 0, category, roll_label, name, description, position
+                        FROM class_features_old;
+                        DROP TABLE class_features_old;
+                        """
+                    )
+
+                connection.executescript(
+                    """
+                    CREATE TABLE IF NOT EXISTS class_feature_links (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        class_id INTEGER NOT NULL,
+                        class_feature_id INTEGER NOT NULL,
+                        position INTEGER NOT NULL,
+                        UNIQUE (class_id, class_feature_id),
+                        FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
+                        FOREIGN KEY (class_feature_id) REFERENCES class_features(id) ON DELETE CASCADE
+                    );
+
+                    INSERT OR IGNORE INTO class_feature_links (class_id, class_feature_id, position)
+                    SELECT class_id, id, position
+                    FROM class_features
+                    WHERE class_id IS NOT NULL;
+                    """
+                )
+
+                if "classes_old" in self._foreign_key_targets(connection, "characters"):
+                    connection.executescript(
+                        """
+                        ALTER TABLE characters RENAME TO characters_class_fk_old;
+                        CREATE TABLE characters (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            user_id INTEGER NOT NULL,
+                            discord_name TEXT NOT NULL,
+                            name TEXT NOT NULL,
+                            class_id INTEGER,
+                            class_name TEXT NOT NULL,
+                            status TEXT NOT NULL DEFAULT 'active',
+                            background TEXT NOT NULL DEFAULT '',
+                            description TEXT NOT NULL DEFAULT '',
+                            agility INTEGER NOT NULL DEFAULT 0,
+                            presence INTEGER NOT NULL DEFAULT 0,
+                            strength INTEGER NOT NULL DEFAULT 0,
+                            toughness INTEGER NOT NULL DEFAULT 0,
+                            hp INTEGER NOT NULL DEFAULT 1,
+                            max_hp INTEGER NOT NULL DEFAULT 1,
+                            omens INTEGER NOT NULL DEFAULT 0,
+                            silver INTEGER NOT NULL DEFAULT 0,
+                            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE SET NULL
+                        );
+                        INSERT INTO characters (
+                            id, user_id, discord_name, name, class_id, class_name, status, background, description,
+                            agility, presence, strength, toughness, hp, max_hp, omens, silver, created_at, updated_at
+                        )
+                        SELECT
+                            id, user_id, discord_name, name, class_id, class_name, status, background, description,
+                            agility, presence, strength, toughness, hp, max_hp, omens, silver, created_at, updated_at
+                        FROM characters_class_fk_old;
+                        DROP TABLE characters_class_fk_old;
+                        """
+                    )
+
+                if "class_features_old" in self._foreign_key_targets(connection, "character_class_features"):
+                    connection.executescript(
+                        """
+                        ALTER TABLE character_class_features RENAME TO character_class_features_feature_fk_old;
+                        CREATE TABLE character_class_features (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            character_id INTEGER NOT NULL,
+                            class_feature_id INTEGER NOT NULL,
+                            position INTEGER NOT NULL,
+                            FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+                            FOREIGN KEY (class_feature_id) REFERENCES class_features(id) ON DELETE CASCADE
+                        );
+                        INSERT INTO character_class_features (id, character_id, class_feature_id, position)
+                        SELECT id, character_id, class_feature_id, position
+                        FROM character_class_features_feature_fk_old;
+                        DROP TABLE character_class_features_feature_fk_old;
+                        """
+                    )
+            finally:
+                connection.execute("PRAGMA foreign_keys = ON")
+
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_classes_global_slug ON classes(lower(slug)) WHERE guild_id IS NULL"
+            )
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_classes_global_name ON classes(lower(name)) WHERE guild_id IS NULL"
+            )
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_classes_guild_slug ON classes(guild_id, lower(slug)) WHERE guild_id IS NOT NULL"
+            )
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_classes_guild_name ON classes(guild_id, lower(name)) WHERE guild_id IS NOT NULL"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_class_features_guild ON class_features(guild_id, lower(name), id)"
             )
 
     def _migrate_single_character_schema(self) -> None:
@@ -308,19 +506,20 @@ class CharacterStore:
         with self._connect() as connection:
             for class_payload in CLASS_SEED_DATA:
                 existing = connection.execute(
-                    "SELECT id FROM classes WHERE slug = ?",
+                    "SELECT id FROM classes WHERE guild_id IS NULL AND lower(slug) = lower(?)",
                     (class_payload["slug"],),
                 ).fetchone()
                 if existing is None:
                     cursor = connection.execute(
                         """
                         INSERT INTO classes (
-                            slug, name, source, description, starting_silver, omen_die,
+                            guild_id, slug, name, source, description, starting_silver, omen_die,
                             hp_formula, ability_summary, equipment_summary, notes
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
+                            None,
                             class_payload["slug"],
                             class_payload["name"],
                             class_payload["source"],
@@ -380,6 +579,7 @@ class CharacterStore:
                                 position,
                             ),
                         )
+                        feature_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
                     else:
                         connection.execute(
                             """
@@ -396,6 +596,18 @@ class CharacterStore:
                                 existing_feature_id,
                             ),
                         )
+                        feature_id = existing_feature_id
+                    connection.execute(
+                        """
+                        INSERT OR IGNORE INTO class_feature_links (class_id, class_feature_id, position)
+                        VALUES (?, ?, ?)
+                        """,
+                        (class_id, feature_id, position),
+                    )
+                    connection.execute(
+                        "UPDATE class_feature_links SET position = ? WHERE class_id = ? AND class_feature_id = ?",
+                        (position, class_id, feature_id),
+                    )
 
                 connection.execute(
                     "DELETE FROM class_features WHERE class_id = ? AND position > ?",
@@ -425,6 +637,7 @@ class CharacterStore:
     def _build_class_template(self, row: sqlite3.Row, feature_rows: list[sqlite3.Row]) -> ClassTemplate:
         return ClassTemplate(
             id=row["id"],
+            guild_id=row["guild_id"],
             slug=row["slug"],
             name=row["name"],
             source=row["source"],
@@ -438,6 +651,9 @@ class CharacterStore:
             features=[
                 ClassFeature(
                     id=feature_row["id"],
+                    guild_id=feature_row["guild_id"],
+                    class_id=feature_row["class_id"],
+                    reusable=bool(feature_row["reusable"]),
                     category=feature_row["category"],
                     roll_label=feature_row["roll_label"] or "",
                     name=feature_row["name"],
@@ -447,41 +663,79 @@ class CharacterStore:
             ],
         )
 
-    def list_classes(self) -> list[ClassTemplate]:
+    def _class_feature_rows(self, connection: sqlite3.Connection, class_id: int, guild_id: int | None) -> list[sqlite3.Row]:
+        params: list[object] = [class_id]
+        guild_filter = "AND cf.guild_id IS NULL"
+        if guild_id is not None:
+            guild_filter = "AND (cf.guild_id IS NULL OR cf.guild_id = ?)"
+            params.append(guild_id)
+        return connection.execute(
+            f"""
+            SELECT cf.*
+            FROM class_feature_links cfl
+            JOIN class_features cf ON cf.id = cfl.class_feature_id
+            WHERE cfl.class_id = ?
+            {guild_filter}
+            ORDER BY cfl.position, cf.position, cf.id
+            """,
+            params,
+        ).fetchall()
+
+    def list_classes(self, guild_id: int | None = None) -> list[ClassTemplate]:
+        params: list[object] = []
+        guild_filter = "guild_id IS NULL"
+        if guild_id is not None:
+            guild_filter = "(guild_id IS NULL OR guild_id = ?)"
+            params.append(guild_id)
         with self._connect() as connection:
-            class_rows = connection.execute("SELECT * FROM classes ORDER BY name").fetchall()
-            feature_rows = connection.execute(
-                "SELECT * FROM class_features ORDER BY class_id, position"
+            class_rows = connection.execute(
+                f"SELECT * FROM classes WHERE {guild_filter} ORDER BY lower(name), id",
+                params,
             ).fetchall()
+            return [
+                self._build_class_template(class_row, self._class_feature_rows(connection, class_row["id"], guild_id))
+                for class_row in class_rows
+            ]
 
-        features_by_class: dict[int, list[sqlite3.Row]] = {}
-        for row in feature_rows:
-            features_by_class.setdefault(row["class_id"], []).append(row)
-
-        return [
-            self._build_class_template(class_row, features_by_class.get(class_row["id"], []))
-            for class_row in class_rows
-        ]
-
-    def find_class(self, query: str) -> ClassTemplate | None:
+    def find_class(self, query: str, guild_id: int | None = None) -> ClassTemplate | None:
         normalized = query.strip().lower()
         if not normalized:
             return None
 
         with self._connect() as connection:
+            row = None
+            if guild_id is not None:
+                row = connection.execute(
+                    """
+                    SELECT * FROM classes
+                    WHERE guild_id = ?
+                    AND (lower(name) = ? OR lower(slug) = ? OR replace(lower(name), '''', '') = ?)
+                    """,
+                    (guild_id, normalized, normalized, normalized.replace("'", "")),
+                ).fetchone()
+            if row is None:
+                row = connection.execute(
+                    """
+                    SELECT * FROM classes
+                    WHERE guild_id IS NULL
+                    AND (lower(name) = ? OR lower(slug) = ? OR replace(lower(name), '''', '') = ?)
+                    """,
+                    (normalized, normalized, normalized.replace("'", "")),
+                ).fetchone()
+            if row is None:
+                return None
+            feature_rows = self._class_feature_rows(connection, row["id"], guild_id)
+        return self._build_class_template(row, feature_rows)
+
+    def get_class_by_id(self, class_id: int, guild_id: int | None = None) -> ClassTemplate | None:
+        with self._connect() as connection:
             row = connection.execute(
-                """
-                SELECT * FROM classes
-                WHERE lower(name) = ? OR lower(slug) = ? OR replace(lower(name), '''', '') = ?
-                """,
-                (normalized, normalized, normalized.replace("'", "")),
+                "SELECT * FROM classes WHERE id = ? AND (guild_id IS NULL OR guild_id = ?)",
+                (class_id, guild_id),
             ).fetchone()
             if row is None:
                 return None
-            feature_rows = connection.execute(
-                "SELECT * FROM class_features WHERE class_id = ? ORDER BY position",
-                (row["id"],),
-            ).fetchall()
+            feature_rows = self._class_feature_rows(connection, class_id, guild_id)
         return self._build_class_template(row, feature_rows)
 
     def _build_character(
@@ -490,10 +744,11 @@ class CharacterStore:
         equipment_rows: list[sqlite3.Row],
         note_rows: list[sqlite3.Row],
         selected_feature_rows: list[sqlite3.Row],
+        guild_id: int | None = None,
     ) -> Character:
         class_template = None
         if row["class_id"] is not None:
-            class_template = self.get_class_by_id(row["class_id"])
+            class_template = self.get_class_by_id(row["class_id"], guild_id)
 
         return Character(
             id=row["id"],
@@ -519,7 +774,7 @@ class CharacterStore:
             class_template=class_template,
         )
 
-    def _get_character_by_row(self, row: sqlite3.Row | None) -> Character | None:
+    def _get_character_by_row(self, row: sqlite3.Row | None, guild_id: int | None = None) -> Character | None:
         if row is None:
             return None
         with self._connect() as connection:
@@ -535,18 +790,7 @@ class CharacterStore:
                 "SELECT * FROM character_class_features WHERE character_id = ? ORDER BY position, id",
                 (row["id"],),
             ).fetchall()
-        return self._build_character(row, equipment_rows, note_rows, selected_feature_rows)
-
-    def get_class_by_id(self, class_id: int) -> ClassTemplate | None:
-        with self._connect() as connection:
-            row = connection.execute("SELECT * FROM classes WHERE id = ?", (class_id,)).fetchone()
-            if row is None:
-                return None
-            feature_rows = connection.execute(
-                "SELECT * FROM class_features WHERE class_id = ? ORDER BY position",
-                (class_id,),
-            ).fetchall()
-        return self._build_class_template(row, feature_rows)
+        return self._build_character(row, equipment_rows, note_rows, selected_feature_rows, guild_id)
 
     def get_character_by_id(self, character_id: int) -> Character | None:
         with self._connect() as connection:
@@ -577,7 +821,13 @@ class CharacterStore:
             rows = connection.execute(query, params).fetchall()
         return [character for character in (self._get_character_by_row(row) for row in rows) if character is not None]
 
-    def find_character(self, user_id: int, name_or_id: str, include_archived: bool = True) -> Character | None:
+    def find_character(
+        self,
+        user_id: int,
+        name_or_id: str,
+        include_archived: bool = True,
+        guild_id: int | None = None,
+    ) -> Character | None:
         with self._connect() as connection:
             row = None
             if name_or_id.strip().isdigit():
@@ -591,7 +841,7 @@ class CharacterStore:
                 if not include_archived:
                     query += " AND status = 'active'"
                 row = connection.execute(query, params).fetchone()
-        return self._get_character_by_row(row)
+        return self._get_character_by_row(row, guild_id)
 
     def get_active_character(self, guild_id: int, user_id: int) -> Character | None:
         with self._connect() as connection:
@@ -615,7 +865,7 @@ class CharacterStore:
                     """,
                     (user_id,),
             ).fetchone()
-        return self._get_character_by_row(row)
+        return self._get_character_by_row(row, guild_id)
 
     def list_active_characters_for_guild(self, guild_id: int) -> list[Character]:
         with self._connect() as connection:
@@ -629,9 +879,9 @@ class CharacterStore:
                 """,
                 (guild_id,),
             ).fetchall()
-        return [character for character in (self._get_character_by_row(row) for row in rows) if character is not None]
+        return [character for character in (self._get_character_by_row(row, guild_id) for row in rows) if character is not None]
 
-    def upsert(self, character: Character) -> Character:
+    def upsert(self, character: Character, guild_id: int | None = None) -> Character:
         character.name = validate_text(character.name, "name", required=True)
         character.class_name = validate_text(character.class_name, "class_name", required=True)
         character.background = validate_text(character.background, "background")
@@ -721,7 +971,9 @@ class CharacterStore:
                     (character_id, feature_id, position),
                 )
 
-        return self.get_character_by_id(character_id) or character
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM characters WHERE id = ?", (character_id,)).fetchone()
+        return self._get_character_by_row(row, guild_id) or character
 
     def set_active_character(self, guild_id: int, user_id: int, character_id: int) -> None:
         with self._connect() as connection:
@@ -737,6 +989,190 @@ class CharacterStore:
     def clear_active_character(self, guild_id: int, user_id: int) -> None:
         with self._connect() as connection:
             connection.execute("DELETE FROM active_characters WHERE guild_id = ? AND user_id = ?", (guild_id, user_id))
+
+    def create_homebrew_class(
+        self,
+        guild_id: int,
+        *,
+        name: str,
+        description: str,
+        source: str = "Server homebrew",
+        starting_silver: str = "",
+        omen_die: str = "",
+        hp_formula: str = "",
+        ability_summary: str = "",
+        equipment_summary: str = "",
+        notes: str = "",
+    ) -> ClassTemplate:
+        clean_name = validate_text(name, "class_name", required=True)
+        clean_description = validate_text(description, "class_description", required=True)
+        clean_source = validate_text(source, "class_source") or "Server homebrew"
+        clean_starting_silver = validate_text(starting_silver, "class_rule")
+        clean_omen_die = validate_text(omen_die, "class_rule")
+        clean_hp_formula = validate_text(hp_formula, "class_rule")
+        clean_ability_summary = validate_text(ability_summary, "class_summary")
+        clean_equipment_summary = validate_text(equipment_summary, "class_summary")
+        clean_notes = validate_text(notes, "class_notes")
+        slug = make_slug(clean_name)
+
+        if self.find_class(clean_name, guild_id) and any(
+            class_template.guild_id == guild_id
+            for class_template in self.list_classes(guild_id)
+            if class_template.name.lower() == clean_name.lower() or class_template.slug.lower() == slug
+        ):
+            raise ValueError(f"A homebrew class named `{clean_name}` already exists in this server.")
+
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO classes (
+                    guild_id, slug, name, source, description, starting_silver, omen_die,
+                    hp_formula, ability_summary, equipment_summary, notes
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    guild_id,
+                    slug,
+                    clean_name,
+                    clean_source,
+                    clean_description,
+                    clean_starting_silver,
+                    clean_omen_die,
+                    clean_hp_formula,
+                    clean_ability_summary,
+                    clean_equipment_summary,
+                    clean_notes,
+                ),
+            )
+            class_id = cursor.lastrowid
+        created = self.get_class_by_id(class_id, guild_id)
+        if created is None:
+            raise ValueError("The homebrew class could not be loaded after saving.")
+        return created
+
+    def create_homebrew_feature(
+        self,
+        guild_id: int,
+        *,
+        category: str,
+        name: str,
+        description: str,
+        roll_label: str = "",
+    ) -> ClassFeature:
+        clean_category = make_slug(validate_text(category, "class_feature_category", required=True)).replace("-", "_")
+        clean_name = validate_text(name, "class_feature_name", required=True)
+        clean_description = validate_text(description, "class_feature_description", required=True)
+        clean_roll_label = validate_text(roll_label, "class_feature_roll")
+
+        with self._connect() as connection:
+            existing = connection.execute(
+                "SELECT id FROM class_features WHERE guild_id = ? AND reusable = 1 AND lower(name) = lower(?)",
+                (guild_id, clean_name),
+            ).fetchone()
+            if existing is not None:
+                raise ValueError(f"A homebrew feature named `{clean_name}` already exists in this server.")
+            cursor = connection.execute(
+                """
+                INSERT INTO class_features (
+                    guild_id, class_id, reusable, category, roll_label, name, description, position
+                )
+                VALUES (?, NULL, 1, ?, ?, ?, ?, 0)
+                """,
+                (guild_id, clean_category, clean_roll_label, clean_name, clean_description),
+            )
+            feature_id = cursor.lastrowid
+            row = connection.execute("SELECT * FROM class_features WHERE id = ?", (feature_id,)).fetchone()
+        return ClassFeature(
+            id=row["id"],
+            guild_id=row["guild_id"],
+            class_id=row["class_id"],
+            reusable=bool(row["reusable"]),
+            category=row["category"],
+            roll_label=row["roll_label"] or "",
+            name=row["name"],
+            description=row["description"],
+        )
+
+    def list_homebrew_features(self, guild_id: int) -> list[ClassFeature]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM class_features
+                WHERE guild_id = ? AND reusable = 1
+                ORDER BY lower(name), id
+                """,
+                (guild_id,),
+            ).fetchall()
+        return [
+            ClassFeature(
+                id=row["id"],
+                guild_id=row["guild_id"],
+                class_id=row["class_id"],
+                reusable=bool(row["reusable"]),
+                category=row["category"],
+                roll_label=row["roll_label"] or "",
+                name=row["name"],
+                description=row["description"],
+            )
+            for row in rows
+        ]
+
+    def find_homebrew_feature(self, guild_id: int, query: str) -> ClassFeature | None:
+        normalized = query.strip().lower()
+        if not normalized:
+            return None
+        with self._connect() as connection:
+            row = None
+            if normalized.isdigit():
+                row = connection.execute(
+                    "SELECT * FROM class_features WHERE guild_id = ? AND reusable = 1 AND id = ?",
+                    (guild_id, int(normalized)),
+                ).fetchone()
+            if row is None:
+                row = connection.execute(
+                    "SELECT * FROM class_features WHERE guild_id = ? AND reusable = 1 AND lower(name) = ?",
+                    (guild_id, normalized),
+                ).fetchone()
+        if row is None:
+            return None
+        return ClassFeature(
+            id=row["id"],
+            guild_id=row["guild_id"],
+            class_id=row["class_id"],
+            reusable=bool(row["reusable"]),
+            category=row["category"],
+            roll_label=row["roll_label"] or "",
+            name=row["name"],
+            description=row["description"],
+        )
+
+    def link_feature_to_class(self, guild_id: int, feature_query: str, class_query: str) -> ClassTemplate:
+        feature = self.find_homebrew_feature(guild_id, feature_query)
+        if feature is None or feature.id is None:
+            raise ValueError("No homebrew feature in this server matches that name or id.")
+        class_template = self.find_class(class_query, guild_id)
+        if class_template is None or class_template.id is None:
+            raise ValueError("No class available in this server matches that name.")
+
+        with self._connect() as connection:
+            max_position = connection.execute(
+                "SELECT COALESCE(MAX(position), 0) FROM class_feature_links WHERE class_id = ?",
+                (class_template.id,),
+            ).fetchone()[0]
+            connection.execute(
+                """
+                INSERT INTO class_feature_links (class_id, class_feature_id, position)
+                VALUES (?, ?, ?)
+                ON CONFLICT(class_id, class_feature_id) DO UPDATE SET position = excluded.position
+                """,
+                (class_template.id, feature.id, max_position + 1),
+            )
+
+        updated = self.get_class_by_id(class_template.id, guild_id)
+        if updated is None:
+            raise ValueError("The class could not be loaded after linking the feature.")
+        return updated
 
     def _build_party_loot(self, row: sqlite3.Row) -> PartyLoot:
         return PartyLoot(

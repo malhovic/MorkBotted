@@ -63,8 +63,13 @@ def class_feature_hint(character: Character) -> str:
     return "Use one of: " + "; ".join(examples) + "."
 
 
-def apply_class_selection(store: CharacterStore, character: Character, raw_class_name: str) -> Character:
-    resolved_class = store.find_class(raw_class_name)
+def apply_class_selection(
+    store: CharacterStore,
+    character: Character,
+    raw_class_name: str,
+    guild_id: int | None = None,
+) -> Character:
+    resolved_class = store.find_class(raw_class_name, guild_id)
     previous_class_id = character.class_id
     if resolved_class:
         character.class_id = resolved_class.id
@@ -99,6 +104,7 @@ def create_character_from_values(
     equipment: str | None,
     notes: str | None,
     class_feature: str | None = None,
+    guild_id: int | None = None,
 ) -> Character:
     try:
         clean_equipment = validate_text_list(parse_csv_field(equipment), "equipment", max_items=MAX_EQUIPMENT_ITEMS)
@@ -128,7 +134,7 @@ def create_character_from_values(
         equipment=clean_equipment,
         notes=clean_notes,
     )
-    apply_class_selection(store, character, clean_class_name)
+    apply_class_selection(store, character, clean_class_name, guild_id)
     if clean_class_feature and not character.class_template:
         raise CharacterCreationError(
             "class_name",
@@ -142,4 +148,4 @@ def create_character_from_values(
         if selected_feature is None or selected_feature.id is None:
             raise CharacterCreationError("class_feature", clean_class_feature, class_feature_hint(character))
         character.selected_class_feature_ids.append(selected_feature.id)
-    return store.upsert(character)
+    return store.upsert(character, guild_id)

@@ -39,6 +39,9 @@ class ClassFeature:
     description: str
     roll_label: str = ""
     id: int | None = None
+    guild_id: int | None = None
+    class_id: int | None = None
+    reusable: bool = False
 
 
 @dataclass
@@ -55,6 +58,7 @@ class ClassTemplate:
     notes: str = ""
     features: list[ClassFeature] = field(default_factory=list)
     id: int | None = None
+    guild_id: int | None = None
 
 
 @dataclass

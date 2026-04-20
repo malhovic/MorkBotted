@@ -9,6 +9,7 @@
 - SQLite-backed character storage with automatic migration from the older JSON file
 - Multiple characters per user with per-server active character selection
 - Stored class templates and feature data for core and supplemental MORK BORG classes, including Dire Hunter
+- Server-scoped GM homebrew classes and reusable class features
 - Ability modifiers for Agility, Presence, Strength, and Toughness
 - Raw dice expressions like `!roll d6` or `!roll 2d8+1`
 - MORK BORG-style tests like `!roll strength` or `!roll presence 14`
@@ -73,6 +74,10 @@ If `COMMAND_SYNC_GUILD_ID` is set, the bot also syncs slash commands directly in
 - `/gm-npcs`
 - `/gm-npc`
 - `/gm-npc-create`
+- `/gm-class-create`
+- `/gm-feature-create`
+- `/gm-features`
+- `/gm-feature-link`
 - `/classes`
 - `/classinfo`
 - `/sheet`
@@ -131,7 +136,7 @@ Ability fields use MORK BORG modifiers such as `-1`, `0`, or `+2`, not raw 3d6 a
 
 If the class name matches one of the stored templates, the bot links the character to that class and includes class-source details in sheet exports.
 If the character's class has a feature table, pick the chosen feature from `class_feature` autocomplete. Category-specific entries like `beast form: Flayed and Dripping Wolf` are preferred because they identify the exact table.
-Slash `/create` autocompletes class feature options after you choose a stored class.
+Slash `/create` autocompletes class feature options after you choose a stored class. In a Discord server, class and feature autocomplete also includes that server's GM-created homebrew.
 
 Notes are freeform reminders only. Use `/notes` to list them, `/addnote` to append one, `/editnote` to replace a numbered note, and `/removenote` to remove a numbered note.
 
@@ -180,6 +185,10 @@ Use these commands to manage table-facing campaign state:
 - `/gm-npcs` to list NPCs for the current server
 - `/gm-npc` to view one NPC by id
 - `/gm-npc-create` to create an NPC with description, disposition, and private notes
+- `/gm-class-create` to create a homebrew class for the current server
+- `/gm-feature-create` to create a reusable homebrew class feature for the current server
+- `/gm-features` to list reusable homebrew features for the current server
+- `/gm-feature-link` to attach one reusable feature to one or more classes in the current server
 
 ## Legacy prefix commands
 

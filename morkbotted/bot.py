@@ -415,11 +415,10 @@ def build_bot() -> commands.Bot:
         interaction: discord.Interaction,
         current: str,
     ) -> list[app_commands.Choice[str]]:
-        del interaction
         current_lower = current.lower()
         matches = [
             app_commands.Choice(name=class_template.name, value=class_template.name)
-            for class_template in store.list_classes()
+            for class_template in store.list_classes(interaction.guild_id)
             if not current_lower or current_lower in class_template.name.lower()
         ]
         return matches[:25]
@@ -514,7 +513,7 @@ def build_bot() -> commands.Bot:
         current: str,
     ) -> list[app_commands.Choice[str]]:
         class_name = str(getattr(interaction.namespace, "class_name", "") or "")
-        class_template = store.find_class(class_name)
+        class_template = store.find_class(class_name, interaction.guild_id)
         if class_template is None or not class_template.features:
             return []
 
@@ -599,12 +598,12 @@ def build_bot() -> commands.Bot:
 
     @bot.command(name="classes")
     async def classes(ctx: commands.Context) -> None:
-        class_names = [class_template.name for class_template in store.list_classes()]
+        class_names = [class_template.name for class_template in store.list_classes(ctx.guild.id if ctx.guild else None)]
         await ctx.send("Available classes:\n" + "\n".join(f"- {name}" for name in class_names))
 
     @bot.command(name="classinfo")
     async def classinfo(ctx: commands.Context, *, class_name: str) -> None:
-        class_template = store.find_class(class_name)
+        class_template = store.find_class(class_name, ctx.guild.id if ctx.guild else None)
         if class_template is None:
             raise commands.BadArgument(
                 f"No stored class named `{escape_discord_text(class_name)}`. Try `{prefix}classes` to see available options."
@@ -667,6 +666,7 @@ def build_bot() -> commands.Bot:
                 equipment=form_data.get("equipment"),
                 notes=form_data.get("notes"),
                 class_feature=form_data.get("class_feature"),
+                guild_id=ctx.guild.id if ctx.guild else None,
             )
         except CharacterCreationError as error:
             await dm_channel.send(f"I couldn't save that character. {error}")
@@ -811,7 +811,7 @@ def build_bot() -> commands.Bot:
         if normalized in {"hp", "max_hp", "omens", "silver"}:
             setattr(character, normalized, parse_int(value))
         elif normalized == "class_name":
-            apply_class_selection(store, character, validate_text(value, "class_name"))
+            apply_class_selection(store, character, validate_text(value, "class_name"), ctx.guild.id if ctx.guild else None)
         else:
             setattr(character, normalized, validate_text(value, normalized))
 
@@ -946,7 +946,7 @@ def build_bot() -> commands.Bot:
 
     @bot.tree.command(name="classes", description="List the class templates stored in the bot database.")
     async def slash_classes(interaction: discord.Interaction) -> None:
-        class_names = [class_template.name for class_template in store.list_classes()]
+        class_names = [class_template.name for class_template in store.list_classes(interaction.guild_id)]
         await interaction.response.send_message(
             "Available classes:\n" + "\n".join(f"- {name}" for name in class_names),
             ephemeral=True,
@@ -956,7 +956,7 @@ def build_bot() -> commands.Bot:
     @app_commands.describe(class_name="Stored class name")
     @app_commands.autocomplete(class_name=class_name_autocomplete)
     async def slash_classinfo(interaction: discord.Interaction, class_name: str) -> None:
-        class_template = store.find_class(class_name)
+        class_template = store.find_class(class_name, interaction.guild_id)
         if class_template is None:
             await interaction.response.send_message(
                 f"No stored class named `{escape_discord_text(class_name)}`. Try `/classes` first.",
@@ -991,7 +991,7 @@ def build_bot() -> commands.Bot:
         if interaction.guild_id is None:
             await interaction.response.send_message("Use this in a server so I can store your active character for that server.", ephemeral=True)
             return
-        selected = store.find_character(interaction.user.id, character, include_archived=False)
+        selected = store.find_character(interaction.user.id, character, include_archived=False, guild_id=interaction.guild_id)
         if selected is None:
             await interaction.response.send_message("I couldn't find an active character matching that selection.", ephemeral=True)
             return
@@ -1020,7 +1020,7 @@ def build_bot() -> commands.Bot:
         character: str,
         status: str,
     ) -> None:
-        selected = store.find_character(interaction.user.id, character, include_archived=True)
+        selected = store.find_character(interaction.user.id, character, include_archived=True, guild_id=interaction.guild_id)
         if selected is None or selected.id is None:
             await interaction.response.send_message("I couldn't find a character matching that selection.", ephemeral=True)
             return
@@ -1045,7 +1045,7 @@ def build_bot() -> commands.Bot:
     @app_commands.describe(character="Character name or id")
     @app_commands.autocomplete(character=character_name_autocomplete)
     async def slash_character_delete(interaction: discord.Interaction, character: str) -> None:
-        selected = store.find_character(interaction.user.id, character, include_archived=True)
+        selected = store.find_character(interaction.user.id, character, include_archived=True, guild_id=interaction.guild_id)
         if selected is None or selected.id is None:
             await interaction.response.send_message("I couldn't find a character matching that selection.", ephemeral=True)
             return
@@ -1200,13 +1200,145 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
+    @bot.tree.command(name="gm-class-create", description="GM: Create a server homebrew class.")
+    @app_commands.guild_only()
+    @app_commands.describe(
+        name="Homebrew class name",
+        description="Core class description",
+        source="Optional source label",
+        hp_formula="Optional HP rule",
+        omen_die="Optional daily omen die",
+        ability_summary="Optional ability notes",
+        equipment_summary="Optional equipment notes",
+        notes="Optional extra notes",
+    )
+    async def slash_gm_class_create(
+        interaction: discord.Interaction,
+        name: str,
+        description: str,
+        source: str = "Server homebrew",
+        hp_formula: str = "",
+        omen_die: str = "",
+        ability_summary: str = "",
+        equipment_summary: str = "",
+        notes: str = "",
+    ) -> None:
+        if not await require_gm_access(interaction, gm_role_name):
+            return
+        guild_id = require_interaction_guild_id(interaction)
+        if guild_id is None:
+            await interaction.response.send_message("Use this in a server so I can scope homebrew classes correctly.", ephemeral=True)
+            return
+        try:
+            class_template = store.create_homebrew_class(
+                guild_id,
+                name=name,
+                description=description,
+                source=source,
+                hp_formula=hp_formula,
+                omen_die=omen_die,
+                ability_summary=ability_summary,
+                equipment_summary=equipment_summary,
+                notes=notes,
+            )
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"Created server class **{escape_discord_text(class_template.name)}**. Players can now find it in class autocomplete.",
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="gm-feature-create", description="GM: Create a reusable server homebrew class feature.")
+    @app_commands.guild_only()
+    @app_commands.describe(
+        name="Feature name",
+        description="Feature rules text",
+        category="Feature category such as gift, relic, beast form, or specialty",
+        roll_label="Optional table roll label",
+    )
+    async def slash_gm_feature_create(
+        interaction: discord.Interaction,
+        name: str,
+        description: str,
+        category: str = "feature",
+        roll_label: str = "",
+    ) -> None:
+        if not await require_gm_access(interaction, gm_role_name):
+            return
+        guild_id = require_interaction_guild_id(interaction)
+        if guild_id is None:
+            await interaction.response.send_message("Use this in a server so I can scope homebrew features correctly.", ephemeral=True)
+            return
+        try:
+            feature = store.create_homebrew_feature(
+                guild_id,
+                category=category,
+                name=name,
+                description=description,
+                roll_label=roll_label,
+            )
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"Created server feature #{feature.id}: **{escape_discord_text(feature.name)}**. Link it with `/gm-feature-link`.",
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="gm-features", description="GM: List reusable homebrew features for this server.")
+    @app_commands.guild_only()
+    async def slash_gm_features(interaction: discord.Interaction) -> None:
+        if not await require_gm_access(interaction, gm_role_name):
+            return
+        guild_id = require_interaction_guild_id(interaction)
+        if guild_id is None:
+            await interaction.response.send_message("Use this in a server so I can scope homebrew features correctly.", ephemeral=True)
+            return
+        features = store.list_homebrew_features(guild_id)
+        if not features:
+            await interaction.response.send_message("No reusable homebrew features recorded for this server.", ephemeral=True)
+            return
+        lines = ["Reusable homebrew features:"]
+        for feature in features:
+            roll_text = f" [{escape_discord_text(feature.roll_label)}]" if feature.roll_label else ""
+            lines.append(
+                f"- #{feature.id}{roll_text} **{escape_discord_text(feature.name)}** "
+                f"({escape_discord_text(feature.category.replace('_', ' '))})"
+            )
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+    @bot.tree.command(name="gm-feature-link", description="GM: Attach a reusable server feature to a class.")
+    @app_commands.guild_only()
+    @app_commands.describe(
+        feature="Homebrew feature name or id",
+        class_name="Class to receive the feature",
+    )
+    @app_commands.autocomplete(class_name=class_name_autocomplete)
+    async def slash_gm_feature_link(interaction: discord.Interaction, feature: str, class_name: str) -> None:
+        if not await require_gm_access(interaction, gm_role_name):
+            return
+        guild_id = require_interaction_guild_id(interaction)
+        if guild_id is None:
+            await interaction.response.send_message("Use this in a server so I can scope homebrew features correctly.", ephemeral=True)
+            return
+        try:
+            class_template = store.link_feature_to_class(guild_id, feature, class_name)
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"Linked that feature to **{escape_discord_text(class_template.name)}**. Players will see it in feature autocomplete for this server.",
+            ephemeral=True,
+        )
+
     @bot.tree.command(name="scvmbirth", description="Generate a ready-to-play random character.")
     @app_commands.describe(class_name="Optional class to force instead of rolling from the catalog")
     @app_commands.autocomplete(class_name=class_name_autocomplete)
     async def slash_scvmbirth(interaction: discord.Interaction, class_name: str | None = None) -> None:
         await interaction.response.defer(ephemeral=True, thinking=True)
         if class_name:
-            class_template = store.find_class(class_name)
+            class_template = store.find_class(class_name, interaction.guild_id)
             if class_template is None:
                 await interaction.followup.send(
                     f"No stored class named `{escape_discord_text(class_name)}`. Try `/classes` first.",
@@ -1214,7 +1346,7 @@ def build_bot() -> commands.Bot:
                 )
                 return
         else:
-            classes = store.list_classes()
+            classes = store.list_classes(interaction.guild_id)
             if not classes:
                 await interaction.followup.send(
                     "No stored classes are available yet, so I can't generate a character.",
@@ -1228,7 +1360,7 @@ def build_bot() -> commands.Bot:
             user_id=interaction.user.id,
             discord_name=interaction.user.display_name,
         )
-        character = store.upsert(character)
+        character = store.upsert(character, interaction.guild_id)
         if interaction.guild_id is not None and character.id is not None:
             store.set_active_character(interaction.guild_id, interaction.user.id, character.id)
         await send_interaction_text(
@@ -1355,6 +1487,7 @@ def build_bot() -> commands.Bot:
                 equipment=equipment,
                 notes=notes,
                 class_feature=class_feature,
+                guild_id=interaction.guild_id,
             )
         except CharacterCreationError as error:
             await interaction.response.send_message(f"I couldn't save that character. {error}", ephemeral=True)
@@ -1433,7 +1566,7 @@ def build_bot() -> commands.Bot:
             if normalized in {"hp", "max_hp", "omens", "silver"}:
                 setattr(character, normalized, parse_int(value))
             elif normalized == "class_name":
-                apply_class_selection(store, character, validate_text(value, "class_name"))
+                apply_class_selection(store, character, validate_text(value, "class_name"), interaction.guild_id)
             else:
                 setattr(character, normalized, validate_text(value, normalized))
             store.upsert(character)
