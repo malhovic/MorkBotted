@@ -74,8 +74,13 @@ If `COMMAND_SYNC_GUILD_ID` is set, the bot also syncs slash commands directly in
 - `/gm-npcs`
 - `/gm-npc`
 - `/gm-npc-create`
+- `/gm-classes`
 - `/gm-class-create`
+- `/gm-class-edit`
+- `/gm-class-delete`
 - `/gm-feature-create`
+- `/gm-feature-edit`
+- `/gm-feature-delete`
 - `/gm-features`
 - `/gm-feature-link`
 - `/classes`
@@ -185,8 +190,13 @@ Use these commands to manage table-facing campaign state:
 - `/gm-npcs` to list NPCs for the current server
 - `/gm-npc` to view one NPC by id
 - `/gm-npc-create` to create an NPC with description, disposition, and private notes
+- `/gm-classes` to list homebrew classes for the current server
 - `/gm-class-create` to create a homebrew class for the current server
+- `/gm-class-edit` to rename or update a homebrew class; leave fields blank to keep them, or type `clear` to erase optional fields
+- `/gm-class-delete` to delete a homebrew class from the current server
 - `/gm-feature-create` to create a reusable homebrew class feature for the current server
+- `/gm-feature-edit` to rename or update a reusable homebrew feature; leave fields blank to keep them, or type `clear` to erase the roll label
+- `/gm-feature-delete` to delete a reusable homebrew feature from the current server
 - `/gm-features` to list reusable homebrew features for the current server
 - `/gm-feature-link` to attach one reusable feature to one or more classes in the current server
 

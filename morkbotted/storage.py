@@ -714,23 +714,35 @@ class CharacterStore:
         with self._connect() as connection:
             row = None
             if guild_id is not None:
-                row = connection.execute(
-                    """
-                    SELECT * FROM classes
-                    WHERE guild_id = ?
-                    AND (lower(name) = ? OR lower(slug) = ? OR replace(lower(name), '''', '') = ?)
-                    """,
-                    (guild_id, normalized, normalized, normalized.replace("'", "")),
-                ).fetchone()
+                if normalized.isdigit():
+                    row = connection.execute(
+                        "SELECT * FROM classes WHERE guild_id = ? AND id = ?",
+                        (guild_id, int(normalized)),
+                    ).fetchone()
+                if row is None:
+                    row = connection.execute(
+                        """
+                        SELECT * FROM classes
+                        WHERE guild_id = ?
+                        AND (lower(name) = ? OR lower(slug) = ? OR replace(lower(name), '''', '') = ?)
+                        """,
+                        (guild_id, normalized, normalized, normalized.replace("'", "")),
+                    ).fetchone()
             if row is None:
-                row = connection.execute(
-                    """
-                    SELECT * FROM classes
-                    WHERE guild_id IS NULL
-                    AND (lower(name) = ? OR lower(slug) = ? OR replace(lower(name), '''', '') = ?)
-                    """,
-                    (normalized, normalized, normalized.replace("'", "")),
-                ).fetchone()
+                if normalized.isdigit():
+                    row = connection.execute(
+                        "SELECT * FROM classes WHERE guild_id IS NULL AND id = ?",
+                        (int(normalized),),
+                    ).fetchone()
+                if row is None:
+                    row = connection.execute(
+                        """
+                        SELECT * FROM classes
+                        WHERE guild_id IS NULL
+                        AND (lower(name) = ? OR lower(slug) = ? OR replace(lower(name), '''', '') = ?)
+                        """,
+                        (normalized, normalized, normalized.replace("'", "")),
+                    ).fetchone()
             if row is None:
                 return None
             feature_rows = self._class_feature_rows(connection, row["id"], guild_id)
@@ -999,6 +1011,42 @@ class CharacterStore:
         with self._connect() as connection:
             connection.execute("DELETE FROM active_characters WHERE guild_id = ? AND user_id = ?", (guild_id, user_id))
 
+    def list_homebrew_classes(self, guild_id: int) -> list[ClassTemplate]:
+        with self._connect() as connection:
+            class_rows = connection.execute(
+                "SELECT * FROM classes WHERE guild_id = ? ORDER BY lower(name), id",
+                (guild_id,),
+            ).fetchall()
+            return [
+                self._build_class_template(class_row, self._class_feature_rows(connection, class_row["id"], guild_id))
+                for class_row in class_rows
+            ]
+
+    def find_homebrew_class(self, guild_id: int, query: str) -> ClassTemplate | None:
+        normalized = query.strip().lower()
+        if not normalized:
+            return None
+        with self._connect() as connection:
+            row = None
+            if normalized.isdigit():
+                row = connection.execute(
+                    "SELECT * FROM classes WHERE guild_id = ? AND id = ?",
+                    (guild_id, int(normalized)),
+                ).fetchone()
+            if row is None:
+                row = connection.execute(
+                    """
+                    SELECT * FROM classes
+                    WHERE guild_id = ?
+                    AND (lower(name) = ? OR lower(slug) = ?)
+                    """,
+                    (guild_id, normalized, normalized),
+                ).fetchone()
+            if row is None:
+                return None
+            feature_rows = self._class_feature_rows(connection, row["id"], guild_id)
+        return self._build_class_template(row, feature_rows)
+
     def create_homebrew_class(
         self,
         guild_id: int,
@@ -1060,6 +1108,100 @@ class CharacterStore:
             raise ValueError("The homebrew class could not be loaded after saving.")
         return created
 
+    def update_homebrew_class(
+        self,
+        guild_id: int,
+        class_query: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        source: str | None = None,
+        starting_silver: str | None = None,
+        omen_die: str | None = None,
+        hp_formula: str | None = None,
+        ability_summary: str | None = None,
+        equipment_summary: str | None = None,
+        notes: str | None = None,
+    ) -> ClassTemplate:
+        class_template = self.find_homebrew_class(guild_id, class_query)
+        if class_template is None or class_template.id is None:
+            raise ValueError("No homebrew class in this server matches that name or id.")
+
+        clean_name = class_template.name if name is None else validate_text(name, "class_name", required=True)
+        clean_description = (
+            class_template.description
+            if description is None
+            else validate_text(description, "class_description", required=True)
+        )
+        clean_source = class_template.source if source is None else (validate_text(source, "class_source") or "Server homebrew")
+        clean_starting_silver = (
+            class_template.starting_silver
+            if starting_silver is None
+            else validate_text(starting_silver, "class_rule")
+        )
+        clean_omen_die = class_template.omen_die if omen_die is None else validate_text(omen_die, "class_rule")
+        clean_hp_formula = class_template.hp_formula if hp_formula is None else validate_text(hp_formula, "class_rule")
+        clean_ability_summary = (
+            class_template.ability_summary
+            if ability_summary is None
+            else validate_text(ability_summary, "class_summary")
+        )
+        clean_equipment_summary = (
+            class_template.equipment_summary
+            if equipment_summary is None
+            else validate_text(equipment_summary, "class_summary")
+        )
+        clean_notes = class_template.notes if notes is None else validate_text(notes, "class_notes")
+        clean_slug = make_slug(clean_name)
+
+        with self._connect() as connection:
+            existing = connection.execute(
+                """
+                SELECT id FROM classes
+                WHERE guild_id = ?
+                AND id != ?
+                AND (lower(name) = lower(?) OR lower(slug) = lower(?))
+                """,
+                (guild_id, class_template.id, clean_name, clean_slug),
+            ).fetchone()
+            if existing is not None:
+                raise ValueError(f"Another homebrew class named `{clean_name}` already exists in this server.")
+            connection.execute(
+                """
+                UPDATE classes
+                SET slug = ?, name = ?, source = ?, description = ?, starting_silver = ?, omen_die = ?,
+                    hp_formula = ?, ability_summary = ?, equipment_summary = ?, notes = ?
+                WHERE id = ? AND guild_id = ?
+                """,
+                (
+                    clean_slug,
+                    clean_name,
+                    clean_source,
+                    clean_description,
+                    clean_starting_silver,
+                    clean_omen_die,
+                    clean_hp_formula,
+                    clean_ability_summary,
+                    clean_equipment_summary,
+                    clean_notes,
+                    class_template.id,
+                    guild_id,
+                ),
+            )
+
+        updated = self.get_class_by_id(class_template.id, guild_id)
+        if updated is None:
+            raise ValueError("The homebrew class could not be loaded after editing.")
+        return updated
+
+    def delete_homebrew_class(self, guild_id: int, class_query: str) -> ClassTemplate | None:
+        class_template = self.find_homebrew_class(guild_id, class_query)
+        if class_template is None or class_template.id is None:
+            return None
+        with self._connect() as connection:
+            connection.execute("DELETE FROM classes WHERE id = ? AND guild_id = ?", (class_template.id, guild_id))
+        return class_template
+
     def create_homebrew_feature(
         self,
         guild_id: int,
@@ -1103,6 +1245,18 @@ class CharacterStore:
             description=row["description"],
         )
 
+    def _build_class_feature(self, row: sqlite3.Row) -> ClassFeature:
+        return ClassFeature(
+            id=row["id"],
+            guild_id=row["guild_id"],
+            class_id=row["class_id"],
+            reusable=bool(row["reusable"]),
+            category=row["category"],
+            roll_label=row["roll_label"] or "",
+            name=row["name"],
+            description=row["description"],
+        )
+
     def list_homebrew_features(self, guild_id: int) -> list[ClassFeature]:
         with self._connect() as connection:
             rows = connection.execute(
@@ -1113,19 +1267,7 @@ class CharacterStore:
                 """,
                 (guild_id,),
             ).fetchall()
-        return [
-            ClassFeature(
-                id=row["id"],
-                guild_id=row["guild_id"],
-                class_id=row["class_id"],
-                reusable=bool(row["reusable"]),
-                category=row["category"],
-                roll_label=row["roll_label"] or "",
-                name=row["name"],
-                description=row["description"],
-            )
-            for row in rows
-        ]
+        return [self._build_class_feature(row) for row in rows]
 
     def find_homebrew_feature(self, guild_id: int, query: str) -> ClassFeature | None:
         normalized = query.strip().lower()
@@ -1145,16 +1287,66 @@ class CharacterStore:
                 ).fetchone()
         if row is None:
             return None
-        return ClassFeature(
-            id=row["id"],
-            guild_id=row["guild_id"],
-            class_id=row["class_id"],
-            reusable=bool(row["reusable"]),
-            category=row["category"],
-            roll_label=row["roll_label"] or "",
-            name=row["name"],
-            description=row["description"],
+        return self._build_class_feature(row)
+
+    def update_homebrew_feature(
+        self,
+        guild_id: int,
+        feature_query: str,
+        *,
+        category: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        roll_label: str | None = None,
+    ) -> ClassFeature:
+        feature = self.find_homebrew_feature(guild_id, feature_query)
+        if feature is None or feature.id is None:
+            raise ValueError("No homebrew feature in this server matches that name or id.")
+
+        clean_category = (
+            feature.category
+            if category is None
+            else make_slug(validate_text(category, "class_feature_category", required=True)).replace("-", "_")
         )
+        clean_name = feature.name if name is None else validate_text(name, "class_feature_name", required=True)
+        clean_description = (
+            feature.description
+            if description is None
+            else validate_text(description, "class_feature_description", required=True)
+        )
+        clean_roll_label = feature.roll_label if roll_label is None else validate_text(roll_label, "class_feature_roll")
+
+        with self._connect() as connection:
+            existing = connection.execute(
+                """
+                SELECT id FROM class_features
+                WHERE guild_id = ? AND reusable = 1 AND id != ? AND lower(name) = lower(?)
+                """,
+                (guild_id, feature.id, clean_name),
+            ).fetchone()
+            if existing is not None:
+                raise ValueError(f"Another homebrew feature named `{clean_name}` already exists in this server.")
+            connection.execute(
+                """
+                UPDATE class_features
+                SET category = ?, roll_label = ?, name = ?, description = ?
+                WHERE id = ? AND guild_id = ? AND reusable = 1
+                """,
+                (clean_category, clean_roll_label, clean_name, clean_description, feature.id, guild_id),
+            )
+            row = connection.execute("SELECT * FROM class_features WHERE id = ?", (feature.id,)).fetchone()
+        return self._build_class_feature(row)
+
+    def delete_homebrew_feature(self, guild_id: int, feature_query: str) -> ClassFeature | None:
+        feature = self.find_homebrew_feature(guild_id, feature_query)
+        if feature is None or feature.id is None:
+            return None
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM class_features WHERE id = ? AND guild_id = ? AND reusable = 1",
+                (feature.id, guild_id),
+            )
+        return feature
 
     def link_feature_to_class(self, guild_id: int, feature_query: str, class_query: str) -> ClassTemplate:
         feature = self.find_homebrew_feature(guild_id, feature_query)

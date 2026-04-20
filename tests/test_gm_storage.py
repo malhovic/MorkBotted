@@ -150,6 +150,102 @@ class GMStorageTest(unittest.TestCase):
         self.assertEqual(len(created.selected_class_feature_ids), 1)
         self.assertIn("Rootbound", "\n".join(created.sheet_lines()))
 
+    def test_homebrew_classes_and_features_can_be_edited(self) -> None:
+        store = CharacterStore(self.db_path)
+        class_template = store.create_homebrew_class(
+            100,
+            name="Grave Botnist",
+            description="Typo-ridden corpse flower keeper.",
+            source="Bad draft",
+            hp_formula="d4",
+        )
+        feature = store.create_homebrew_feature(
+            100,
+            category="gif",
+            name="Rootboun",
+            description="Typo roots.",
+            roll_label="1",
+        )
+
+        updated_class = store.update_homebrew_class(
+            100,
+            str(class_template.id),
+            name="Grave Botanist",
+            description="Cultivates corpse flowers and worse ideas.",
+            source="",
+            hp_formula="Toughness + d6",
+        )
+        updated_feature = store.update_homebrew_feature(
+            100,
+            str(feature.id),
+            category="gift",
+            name="Rootbound",
+            description="You can speak with roots that fed on the dead.",
+            roll_label="",
+        )
+
+        self.assertEqual(updated_class.name, "Grave Botanist")
+        self.assertEqual(updated_class.slug, "grave-botanist")
+        self.assertEqual(updated_class.source, "Server homebrew")
+        self.assertEqual(updated_class.hp_formula, "Toughness + d6")
+        self.assertEqual(updated_feature.category, "gift")
+        self.assertEqual(updated_feature.name, "Rootbound")
+        self.assertEqual(updated_feature.roll_label, "")
+        self.assertEqual(store.find_homebrew_class(100, "Grave Botanist").id, class_template.id)
+        self.assertEqual(store.find_homebrew_feature(100, "Rootbound").id, feature.id)
+
+    def test_homebrew_class_delete_removes_template_but_keeps_character_label(self) -> None:
+        store = CharacterStore(self.db_path)
+        class_template = store.create_homebrew_class(100, name="Grave Botanist", description="Cultivates corpse flowers.")
+        character = store.upsert(
+            Character(
+                user_id=10,
+                discord_name="A",
+                name="Moss-Eater",
+                class_id=class_template.id,
+                class_name=class_template.name,
+            ),
+            guild_id=100,
+        )
+
+        deleted = store.delete_homebrew_class(100, str(class_template.id))
+        reloaded = store.get_character_by_id(character.id)
+
+        self.assertEqual(deleted.name, "Grave Botanist")
+        self.assertIsNone(store.find_homebrew_class(100, "Grave Botanist"))
+        self.assertEqual(reloaded.class_name, "Grave Botanist")
+        self.assertIsNone(reloaded.class_id)
+
+    def test_homebrew_feature_delete_removes_links_and_character_selection(self) -> None:
+        store = CharacterStore(self.db_path)
+        class_template = store.create_homebrew_class(100, name="Grave Botanist", description="Cultivates corpse flowers.")
+        feature = store.create_homebrew_feature(
+            100,
+            category="gift",
+            name="Rootbound",
+            description="You can speak with roots that fed on the dead.",
+        )
+        linked_class = store.link_feature_to_class(100, str(feature.id), str(class_template.id))
+        character = store.upsert(
+            Character(
+                user_id=10,
+                discord_name="A",
+                name="Moss-Eater",
+                class_id=linked_class.id,
+                class_name=linked_class.name,
+                selected_class_feature_ids=[feature.id],
+            ),
+            guild_id=100,
+        )
+
+        deleted = store.delete_homebrew_feature(100, str(feature.id))
+        reloaded_class = store.find_homebrew_class(100, "Grave Botanist")
+        reloaded_character = store.get_character_by_id(character.id)
+
+        self.assertEqual(deleted.name, "Rootbound")
+        self.assertEqual(reloaded_class.features, [])
+        self.assertEqual(reloaded_character.selected_class_feature_ids, [])
+
     def test_existing_global_class_schema_migrates_before_guild_indexes(self) -> None:
         self._remove_test_db()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)

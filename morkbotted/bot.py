@@ -372,6 +372,15 @@ def format_npc_detail(npc: NonPlayerCharacter) -> str:
     return "\n".join(lines)
 
 
+def optional_edit_value(value: str) -> str | None:
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    if cleaned.casefold() in {"clear", "none", "blank"}:
+        return ""
+    return cleaned
+
+
 def build_bot() -> commands.Bot:
     logging.basicConfig(
         level=logging.INFO,
@@ -528,6 +537,39 @@ def build_bot() -> commands.Bot:
             if current_lower and current_lower not in searchable:
                 continue
             choices.append(app_commands.Choice(name=name[:100], value=value[:100]))
+        return choices[:25]
+
+    async def homebrew_class_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        if interaction.guild_id is None:
+            return []
+        current_lower = current.lower().strip()
+        choices = []
+        for class_template in store.list_homebrew_classes(interaction.guild_id):
+            label = f"#{class_template.id} {class_template.name}"
+            if current_lower and current_lower not in label.lower():
+                continue
+            choices.append(app_commands.Choice(name=label[:100], value=str(class_template.id)))
+        return choices[:25]
+
+    async def homebrew_feature_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        if interaction.guild_id is None:
+            return []
+        current_lower = current.lower().strip()
+        choices = []
+        for feature in store.list_homebrew_features(interaction.guild_id):
+            category = feature.category.replace("_", " ")
+            roll_text = f" [{feature.roll_label}]" if feature.roll_label else ""
+            label = f"#{feature.id}{roll_text} {feature.name} ({category})"
+            searchable = f"{label} {feature.description}".lower()
+            if current_lower and current_lower not in searchable:
+                continue
+            choices.append(app_commands.Choice(name=label[:100], value=str(feature.id)))
         return choices[:25]
 
     async def character_name_autocomplete(
@@ -1200,17 +1242,37 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
+    @bot.tree.command(name="gm-classes", description="GM: List this server's homebrew classes.")
+    @app_commands.guild_only()
+    async def slash_gm_classes(interaction: discord.Interaction) -> None:
+        if not await require_gm_access(interaction, gm_role_name):
+            return
+        guild_id = require_interaction_guild_id(interaction)
+        if guild_id is None:
+            await interaction.response.send_message("Use this in a server so I can scope homebrew classes correctly.", ephemeral=True)
+            return
+        classes = store.list_homebrew_classes(guild_id)
+        if not classes:
+            await interaction.response.send_message("No homebrew classes recorded for this server.", ephemeral=True)
+            return
+        lines = ["Server homebrew classes:"]
+        for class_template in classes:
+            feature_count = len(class_template.features)
+            feature_text = f" - {feature_count} linked feature(s)" if feature_count else ""
+            lines.append(f"- #{class_template.id} **{escape_discord_text(class_template.name)}**{feature_text}")
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
     @bot.tree.command(name="gm-class-create", description="GM: Create a server homebrew class.")
     @app_commands.guild_only()
     @app_commands.describe(
-        name="Homebrew class name",
-        description="Core class description",
-        source="Optional source label",
-        hp_formula="Optional HP rule",
-        omen_die="Optional daily omen die",
-        ability_summary="Optional ability notes",
-        equipment_summary="Optional equipment notes",
-        notes="Optional extra notes",
+        name="The class name players will pick, such as Grave Botanist",
+        description="Short plain-language class summary shown on sheets",
+        source="Where this came from, such as GM homebrew or a zine name",
+        hp_formula="Starting HP rule, such as Toughness + d6",
+        omen_die="Daily omen die or rule, such as d2 or d4",
+        ability_summary="Ability changes or reminders, such as Presence +2",
+        equipment_summary="Starting gear or equipment notes",
+        notes="Any extra class rules or reminders",
     )
     async def slash_gm_class_create(
         interaction: discord.Interaction,
@@ -1249,13 +1311,86 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
+    @bot.tree.command(name="gm-class-edit", description="GM: Edit one server homebrew class.")
+    @app_commands.guild_only()
+    @app_commands.describe(
+        class_name="Pick the homebrew class to change",
+        name="New class name; leave blank to keep it",
+        description="New class summary; leave blank to keep it",
+        source="New source label; type clear to erase",
+        hp_formula="New HP rule; type clear to erase",
+        omen_die="New omen rule; type clear to erase",
+        ability_summary="New ability notes; type clear to erase",
+        equipment_summary="New equipment notes; type clear to erase",
+        notes="New extra notes; type clear to erase",
+    )
+    @app_commands.autocomplete(class_name=homebrew_class_autocomplete)
+    async def slash_gm_class_edit(
+        interaction: discord.Interaction,
+        class_name: str,
+        name: str = "",
+        description: str = "",
+        source: str = "",
+        hp_formula: str = "",
+        omen_die: str = "",
+        ability_summary: str = "",
+        equipment_summary: str = "",
+        notes: str = "",
+    ) -> None:
+        if not await require_gm_access(interaction, gm_role_name):
+            return
+        guild_id = require_interaction_guild_id(interaction)
+        if guild_id is None:
+            await interaction.response.send_message("Use this in a server so I can scope homebrew classes correctly.", ephemeral=True)
+            return
+        try:
+            class_template = store.update_homebrew_class(
+                guild_id,
+                class_name,
+                name=optional_edit_value(name),
+                description=optional_edit_value(description),
+                source=optional_edit_value(source),
+                hp_formula=optional_edit_value(hp_formula),
+                omen_die=optional_edit_value(omen_die),
+                ability_summary=optional_edit_value(ability_summary),
+                equipment_summary=optional_edit_value(equipment_summary),
+                notes=optional_edit_value(notes),
+            )
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"Updated server class **{escape_discord_text(class_template.name)}**.",
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="gm-class-delete", description="GM: Delete one server homebrew class.")
+    @app_commands.guild_only()
+    @app_commands.describe(class_name="Pick the homebrew class to delete")
+    @app_commands.autocomplete(class_name=homebrew_class_autocomplete)
+    async def slash_gm_class_delete(interaction: discord.Interaction, class_name: str) -> None:
+        if not await require_gm_access(interaction, gm_role_name):
+            return
+        guild_id = require_interaction_guild_id(interaction)
+        if guild_id is None:
+            await interaction.response.send_message("Use this in a server so I can scope homebrew classes correctly.", ephemeral=True)
+            return
+        deleted = store.delete_homebrew_class(guild_id, class_name)
+        if deleted is None:
+            await interaction.response.send_message("No homebrew class in this server matches that name or id.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"Deleted server class **{escape_discord_text(deleted.name)}**. Existing characters keep the class name text, but the template link is removed.",
+            ephemeral=True,
+        )
+
     @bot.tree.command(name="gm-feature-create", description="GM: Create a reusable server homebrew class feature.")
     @app_commands.guild_only()
     @app_commands.describe(
-        name="Feature name",
-        description="Feature rules text",
-        category="Feature category such as gift, relic, beast form, or specialty",
-        roll_label="Optional table roll label",
+        name="Feature name players will see, such as Rootbound",
+        description="What the feature does in play",
+        category="Feature group, such as gift, relic, beast form, or specialty",
+        roll_label="Optional table result, such as 1 or 2-3",
     )
     async def slash_gm_feature_create(
         interaction: discord.Interaction,
@@ -1286,6 +1421,67 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
+    @bot.tree.command(name="gm-feature-edit", description="GM: Edit one reusable server feature.")
+    @app_commands.guild_only()
+    @app_commands.describe(
+        feature="Pick the reusable feature to change",
+        name="New feature name; leave blank to keep it",
+        description="New rules text; leave blank to keep it",
+        category="New group, such as gift or relic; leave blank to keep it",
+        roll_label="New table result; type clear to erase",
+    )
+    @app_commands.autocomplete(feature=homebrew_feature_autocomplete)
+    async def slash_gm_feature_edit(
+        interaction: discord.Interaction,
+        feature: str,
+        name: str = "",
+        description: str = "",
+        category: str = "",
+        roll_label: str = "",
+    ) -> None:
+        if not await require_gm_access(interaction, gm_role_name):
+            return
+        guild_id = require_interaction_guild_id(interaction)
+        if guild_id is None:
+            await interaction.response.send_message("Use this in a server so I can scope homebrew features correctly.", ephemeral=True)
+            return
+        try:
+            updated = store.update_homebrew_feature(
+                guild_id,
+                feature,
+                name=optional_edit_value(name),
+                description=optional_edit_value(description),
+                category=optional_edit_value(category),
+                roll_label=optional_edit_value(roll_label),
+            )
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"Updated server feature #{updated.id}: **{escape_discord_text(updated.name)}**.",
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="gm-feature-delete", description="GM: Delete one reusable server feature.")
+    @app_commands.guild_only()
+    @app_commands.describe(feature="Pick the reusable feature to delete")
+    @app_commands.autocomplete(feature=homebrew_feature_autocomplete)
+    async def slash_gm_feature_delete(interaction: discord.Interaction, feature: str) -> None:
+        if not await require_gm_access(interaction, gm_role_name):
+            return
+        guild_id = require_interaction_guild_id(interaction)
+        if guild_id is None:
+            await interaction.response.send_message("Use this in a server so I can scope homebrew features correctly.", ephemeral=True)
+            return
+        deleted = store.delete_homebrew_feature(guild_id, feature)
+        if deleted is None:
+            await interaction.response.send_message("No homebrew feature in this server matches that name or id.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"Deleted server feature #{deleted.id}: **{escape_discord_text(deleted.name)}**. It is removed from linked classes and character selections.",
+            ephemeral=True,
+        )
+
     @bot.tree.command(name="gm-features", description="GM: List reusable homebrew features for this server.")
     @app_commands.guild_only()
     async def slash_gm_features(interaction: discord.Interaction) -> None:
@@ -1311,10 +1507,10 @@ def build_bot() -> commands.Bot:
     @bot.tree.command(name="gm-feature-link", description="GM: Attach a reusable server feature to a class.")
     @app_commands.guild_only()
     @app_commands.describe(
-        feature="Homebrew feature name or id",
-        class_name="Class to receive the feature",
+        feature="Pick the reusable feature to add to a class",
+        class_name="Pick the class that should offer this feature",
     )
-    @app_commands.autocomplete(class_name=class_name_autocomplete)
+    @app_commands.autocomplete(feature=homebrew_feature_autocomplete, class_name=class_name_autocomplete)
     async def slash_gm_feature_link(interaction: discord.Interaction, feature: str, class_name: str) -> None:
         if not await require_gm_access(interaction, gm_role_name):
             return
