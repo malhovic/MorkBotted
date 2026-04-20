@@ -28,6 +28,7 @@ DEFAULT_DR = 12
 INTERACTIVE_TIMEOUT_SECONDS = 900
 DISCORD_MESSAGE_LIMIT = 2000
 ABILITY_ALIAS_SET = {"agi", "pre", "str", "tgh", "tough"}
+TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
 CREATE_FORM_TEMPLATE = """Reply with this template and replace the values after each colon.
 You can leave optional fields blank.
 Use ability modifiers for stats, not raw 3d6 scores. Examples: -1, 0, +2.
@@ -360,9 +361,10 @@ def build_bot() -> commands.Bot:
     data_dir = Path(os.getenv("DATA_DIR", "data"))
     db_path = Path(os.getenv("DB_PATH", str(data_dir / "morkbotted.db")))
     sync_guild_id = os.getenv("COMMAND_SYNC_GUILD_ID", "").strip()
+    enable_message_content = os.getenv("ENABLE_MESSAGE_CONTENT_INTENT", "").strip().lower() in TRUE_ENV_VALUES
 
     intents = discord.Intents.default()
-    intents.message_content = True
+    intents.message_content = enable_message_content
 
     bot = commands.Bot(command_prefix=prefix, intents=intents, help_command=None)
     store = CharacterStore(db_path)

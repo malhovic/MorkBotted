@@ -47,7 +47,7 @@ Copy-Item .env.example .env
 
 5. Edit `.env` and set `DISCORD_TOKEN` to your Discord bot token. `DB_PATH` defaults to `data/morkbotted.db`.
 6. Optional but recommended for faster slash-command updates while you deploy changes: set `COMMAND_SYNC_GUILD_ID` to your main Discord server id.
-7. In the Discord developer portal, enable the `MESSAGE CONTENT INTENT` for your bot if you want to keep using the legacy `!` commands.
+7. Optional: if you want to keep using legacy `!` commands, enable the `MESSAGE CONTENT INTENT` in the Discord developer portal and set `ENABLE_MESSAGE_CONTENT_INTENT=true` in `.env`. Slash commands do not need this privileged intent.
 8. Run the bot:
 
 ```powershell
@@ -180,6 +180,7 @@ Use these commands to manage table-facing campaign state:
 ## Legacy prefix commands
 
 The older `!` commands are still present for compatibility, but slash commands are now the primary interface and the recommended one for your next server deploy.
+Legacy prefix commands require `ENABLE_MESSAGE_CONTENT_INTENT=true` and Discord's Message Content Intent developer-portal toggle. Leave it disabled if you only use slash commands.
 
 ## Suggested next upgrades
 
