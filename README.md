@@ -58,6 +58,43 @@ Character and class data are stored in `data/morkbotted.db`. If `data/characters
 New class seed data is also backfilled into existing databases on startup.
 If `COMMAND_SYNC_GUILD_ID` is set, the bot also syncs slash commands directly into that server on startup so command changes appear much faster than waiting on global propagation.
 
+## Docker
+
+You can also run MorkBotted in Docker. The compose setup builds the image locally, reads secrets from `.env`, and stores SQLite data on the host in `./data`.
+
+1. Create your environment file:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+2. Edit `.env` and set `DISCORD_TOKEN`. For Docker, keep the default compose-managed database settings or use:
+
+```text
+DATA_DIR=/app/data
+DB_PATH=/app/data/morkbotted.db
+```
+
+3. Build and start the bot:
+
+```powershell
+docker compose up -d --build
+```
+
+4. View logs:
+
+```powershell
+docker compose logs -f morkbotted
+```
+
+5. Stop the bot:
+
+```powershell
+docker compose down
+```
+
+The container runs as a non-root user and mounts `./data` to `/app/data`, so `data/morkbotted.db` persists across rebuilds and restarts.
+
 ## Slash commands
 
 - `/create`

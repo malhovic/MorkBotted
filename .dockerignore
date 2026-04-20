@@ -1,0 +1,16 @@
+.git
+.venv
+__pycache__
+*.py[cod]
+*.db
+*.db-*
+data
+.env
+.env.*
+!.env.example
+tests
+reference_text
+MorkBotted Avatar.png
+MorkBotted Banner.png
+MorkBotted Banner v2.png
+temp_check.db-journal
