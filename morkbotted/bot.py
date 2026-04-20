@@ -21,7 +21,7 @@ from morkbotted.creation import (
 )
 from morkbotted.generator import generate_random_character
 from morkbotted.omens import omen_status_text, roll_daily_omens
-from morkbotted.storage import CharacterStore
+from morkbotted.storage import CharacterStore, NonPlayerCharacter, PartyLoot
 
 DICE_PATTERN = re.compile(r"^(?P<count>\d*)d(?P<sides>\d+)(?P<modifier>[+-]\d+)?$", re.IGNORECASE)
 DEFAULT_DR = 12
@@ -299,6 +299,57 @@ def ensure_guild_id(guild: discord.Guild | None) -> int:
     return guild.id
 
 
+def require_interaction_guild_id(interaction: discord.Interaction) -> int | None:
+    if interaction.guild_id is None:
+        return None
+    return interaction.guild_id
+
+
+def format_gm_character_list(characters: list[Character]) -> str:
+    if not characters:
+        return "No active characters are registered for this server."
+    lines = ["Active characters in this server:"]
+    for character in characters:
+        lines.append(
+            f"- #{character.id} **{character.name}** ({character.class_name}) "
+            f"played by {character.discord_name}: HP `{character.hp}/{character.max_hp}`, "
+            f"Omens `{character.omens}`, Silver `{character.silver}`"
+        )
+    return "\n".join(lines)
+
+
+def format_party_loot(loot_items: list[PartyLoot]) -> str:
+    if not loot_items:
+        return "No party loot recorded for this server."
+    lines = ["Party loot:"]
+    for item in loot_items:
+        notes = f" - {item.notes}" if item.notes else ""
+        lines.append(f"- #{item.id} {item.quantity}x {item.item_text}{notes}")
+    return "\n".join(lines)
+
+
+def format_npc_list(npcs: list[NonPlayerCharacter]) -> str:
+    if not npcs:
+        return "No NPCs recorded for this server."
+    lines = ["NPCs:"]
+    for npc in npcs:
+        disposition = f" [{npc.disposition}]" if npc.disposition else ""
+        summary = f": {npc.description}" if npc.description else ""
+        lines.append(f"- #{npc.id} **{npc.name}**{disposition}{summary}")
+    return "\n".join(lines)
+
+
+def format_npc_detail(npc: NonPlayerCharacter) -> str:
+    lines = [f"**{npc.name}** #{npc.id}"]
+    if npc.disposition:
+        lines.append(f"Disposition: {npc.disposition}")
+    if npc.description:
+        lines.append(f"Description: {npc.description}")
+    if npc.notes:
+        lines.append(f"Notes: {npc.notes}")
+    return "\n".join(lines)
+
+
 def build_bot() -> commands.Bot:
     logging.basicConfig(
         level=logging.INFO,
@@ -498,6 +549,9 @@ def build_bot() -> commands.Bot:
             "`/classinfo` inspect one stored class",
             "`/sheet` show your character",
             "`/export` download your character sheet",
+            "`/gm-characters` show the current active party for this server",
+            "`/gm-party-loot` track shared loot for this server",
+            "`/gm-npcs` track NPCs for this server",
             f"Legacy prefix commands still exist for now under `{prefix}`.",
             f"`{prefix}setstat <ability> <value>` set agility, presence, strength, or toughness",
             f"`{prefix}setfield <field> <value>` update name, class_name, background, description, hp, max_hp, omens, or silver",
@@ -956,6 +1010,141 @@ def build_bot() -> commands.Bot:
             return
         store.delete_character(selected.id)
         await interaction.response.send_message(f"Deleted character **{selected.name}**.", ephemeral=True)
+
+    @bot.tree.command(name="gm-characters", description="GM: List active characters for this server only.")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    async def slash_gm_characters(interaction: discord.Interaction) -> None:
+        guild_id = require_interaction_guild_id(interaction)
+        if guild_id is None:
+            await interaction.response.send_message("Use this in a server so I can scope the party list correctly.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            format_gm_character_list(store.list_active_characters_for_guild(guild_id)),
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="gm-party-loot", description="GM: List party loot for this server.")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    async def slash_gm_party_loot(interaction: discord.Interaction) -> None:
+        guild_id = require_interaction_guild_id(interaction)
+        if guild_id is None:
+            await interaction.response.send_message("Use this in a server so I can scope the loot correctly.", ephemeral=True)
+            return
+        await send_interaction_text(
+            interaction,
+            format_party_loot(store.list_party_loot(guild_id)),
+            ephemeral=True,
+            filename="party_loot.txt",
+        )
+
+    @bot.tree.command(name="gm-party-loot-add", description="GM: Add shared party loot for this server.")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.describe(item="Loot item", quantity="How many", notes="Optional GM-facing notes")
+    async def slash_gm_party_loot_add(
+        interaction: discord.Interaction,
+        item: str,
+        quantity: int = 1,
+        notes: str = "",
+    ) -> None:
+        guild_id = require_interaction_guild_id(interaction)
+        if guild_id is None:
+            await interaction.response.send_message("Use this in a server so I can scope the loot correctly.", ephemeral=True)
+            return
+        if not item.strip():
+            await interaction.response.send_message("Loot item cannot be blank.", ephemeral=True)
+            return
+        try:
+            loot = store.add_party_loot(guild_id, item, quantity, notes)
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"Added party loot #{loot.id}: {loot.quantity}x {loot.item_text}",
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="gm-party-loot-remove", description="GM: Remove shared party loot by id.")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.describe(loot_id="Loot id from `/gm-party-loot`")
+    async def slash_gm_party_loot_remove(interaction: discord.Interaction, loot_id: int) -> None:
+        guild_id = require_interaction_guild_id(interaction)
+        if guild_id is None:
+            await interaction.response.send_message("Use this in a server so I can scope the loot correctly.", ephemeral=True)
+            return
+        removed = store.remove_party_loot(guild_id, loot_id)
+        if removed is None:
+            await interaction.response.send_message(f"No party loot #{loot_id} exists in this server.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"Removed party loot #{removed.id}: {removed.quantity}x {removed.item_text}",
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="gm-npcs", description="GM: List NPCs for this server.")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    async def slash_gm_npcs(interaction: discord.Interaction) -> None:
+        guild_id = require_interaction_guild_id(interaction)
+        if guild_id is None:
+            await interaction.response.send_message("Use this in a server so I can scope NPCs correctly.", ephemeral=True)
+            return
+        await send_interaction_text(
+            interaction,
+            format_npc_list(store.list_npcs(guild_id)),
+            ephemeral=True,
+            filename="npcs.txt",
+        )
+
+    @bot.tree.command(name="gm-npc", description="GM: Show one NPC for this server.")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.describe(npc_id="NPC id from `/gm-npcs`")
+    async def slash_gm_npc(interaction: discord.Interaction, npc_id: int) -> None:
+        guild_id = require_interaction_guild_id(interaction)
+        if guild_id is None:
+            await interaction.response.send_message("Use this in a server so I can scope NPCs correctly.", ephemeral=True)
+            return
+        npc = store.get_npc(guild_id, npc_id)
+        if npc is None:
+            await interaction.response.send_message(f"No NPC #{npc_id} exists in this server.", ephemeral=True)
+            return
+        await interaction.response.send_message(format_npc_detail(npc), ephemeral=True)
+
+    @bot.tree.command(name="gm-npc-create", description="GM: Create an NPC for this server.")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.describe(
+        name="NPC name",
+        description="What the players can know or notice",
+        disposition="Hostile, wary, helpful, doomed, etc.",
+        notes="Private GM notes",
+    )
+    async def slash_gm_npc_create(
+        interaction: discord.Interaction,
+        name: str,
+        description: str = "",
+        disposition: str = "",
+        notes: str = "",
+    ) -> None:
+        guild_id = require_interaction_guild_id(interaction)
+        if guild_id is None:
+            await interaction.response.send_message("Use this in a server so I can scope NPCs correctly.", ephemeral=True)
+            return
+        if not name.strip():
+            await interaction.response.send_message("NPC name cannot be blank.", ephemeral=True)
+            return
+        npc = store.create_npc(
+            guild_id,
+            name=name,
+            description=description,
+            disposition=disposition,
+            notes=notes,
+        )
+        await interaction.response.send_message(f"Created NPC #{npc.id}: **{npc.name}**", ephemeral=True)
 
     @bot.tree.command(name="scvmbirth", description="Generate a ready-to-play random character.")
     @app_commands.describe(class_name="Optional class to force instead of rolling from the catalog")

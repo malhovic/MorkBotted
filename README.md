@@ -66,6 +66,13 @@ If `COMMAND_SYNC_GUILD_ID` is set, the bot also syncs slash commands directly in
 - `/character-switch`
 - `/character-archive`
 - `/character-delete`
+- `/gm-characters`
+- `/gm-party-loot`
+- `/gm-party-loot-add`
+- `/gm-party-loot-remove`
+- `/gm-npcs`
+- `/gm-npc`
+- `/gm-npc-create`
 - `/classes`
 - `/classinfo`
 - `/sheet`
@@ -156,6 +163,20 @@ Use these commands to manage a roster:
 - `/character-archive` to mark a character as `archived`, `dead`, `npc`, or back to `active`
 - `/character-delete` to permanently remove a character
 
+## GM commands
+
+GM commands are slash-only, server-scoped, and default to Discord's Manage Server permission. They only read or write data for the server where the command is used.
+
+Use these commands to manage table-facing campaign state:
+
+- `/gm-characters` to list the active characters registered in the current server
+- `/gm-party-loot` to list shared party loot for the current server
+- `/gm-party-loot-add` to add shared party loot
+- `/gm-party-loot-remove` to remove shared party loot by id
+- `/gm-npcs` to list NPCs for the current server
+- `/gm-npc` to view one NPC by id
+- `/gm-npc-create` to create an NPC with description, disposition, and private notes
+
 ## Legacy prefix commands
 
 The older `!` commands are still present for compatibility, but slash commands are now the primary interface and the recommended one for your next server deploy.
@@ -163,4 +184,4 @@ The older `!` commands are still present for compatibility, but slash commands a
 ## Suggested next upgrades
 
 - Expand the stored character model further with dedicated tables for powers, scrolls, active effects, and session history
-- Add GM-only commands for shared party loot, calendars, and misery tracking
+- Add GM tools for calendars, misery tracking, NPC editing, and encounter notes

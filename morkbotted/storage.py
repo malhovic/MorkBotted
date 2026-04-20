@@ -3,11 +3,31 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
 from morkbotted.character import Character, ClassFeature, ClassTemplate
 from morkbotted.class_data import CLASS_SEED_DATA
+
+
+@dataclass
+class PartyLoot:
+    id: int
+    guild_id: int
+    item_text: str
+    quantity: int = 1
+    notes: str = ""
+
+
+@dataclass
+class NonPlayerCharacter:
+    id: int
+    guild_id: int
+    name: str
+    description: str = ""
+    disposition: str = ""
+    notes: str = ""
 
 
 class CharacterStore:
@@ -126,6 +146,27 @@ class CharacterStore:
                     PRIMARY KEY (guild_id, user_id),
                     FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
                 );
+
+                CREATE TABLE IF NOT EXISTS party_loot (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER NOT NULL,
+                    item_text TEXT NOT NULL,
+                    quantity INTEGER NOT NULL DEFAULT 1,
+                    notes TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS npcs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    disposition TEXT NOT NULL DEFAULT '',
+                    notes TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
                 """
             )
 
@@ -178,6 +219,12 @@ class CharacterStore:
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_characters_owner_name ON characters(user_id, lower(name))"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_party_loot_guild ON party_loot(guild_id, id)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_npcs_guild ON npcs(guild_id, lower(name), id)"
             )
 
     def _repair_character_foreign_keys(self) -> None:
@@ -566,8 +613,22 @@ class CharacterStore:
                     LIMIT 1
                     """,
                     (user_id,),
-                ).fetchone()
+            ).fetchone()
         return self._get_character_by_row(row)
+
+    def list_active_characters_for_guild(self, guild_id: int) -> list[Character]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT c.*
+                FROM active_characters ac
+                JOIN characters c ON c.id = ac.character_id
+                WHERE ac.guild_id = ? AND c.status = 'active'
+                ORDER BY lower(c.name), c.id
+                """,
+                (guild_id,),
+            ).fetchall()
+        return [character for character in (self._get_character_by_row(row) for row in rows) if character is not None]
 
     def upsert(self, character: Character) -> Character:
         with self._connect() as connection:
@@ -668,6 +729,94 @@ class CharacterStore:
     def clear_active_character(self, guild_id: int, user_id: int) -> None:
         with self._connect() as connection:
             connection.execute("DELETE FROM active_characters WHERE guild_id = ? AND user_id = ?", (guild_id, user_id))
+
+    def _build_party_loot(self, row: sqlite3.Row) -> PartyLoot:
+        return PartyLoot(
+            id=row["id"],
+            guild_id=row["guild_id"],
+            item_text=row["item_text"],
+            quantity=row["quantity"],
+            notes=row["notes"],
+        )
+
+    def list_party_loot(self, guild_id: int) -> list[PartyLoot]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM party_loot WHERE guild_id = ? ORDER BY id",
+                (guild_id,),
+            ).fetchall()
+        return [self._build_party_loot(row) for row in rows]
+
+    def add_party_loot(self, guild_id: int, item_text: str, quantity: int = 1, notes: str = "") -> PartyLoot:
+        if quantity < 1:
+            raise ValueError("Loot quantity must be at least 1.")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO party_loot (guild_id, item_text, quantity, notes)
+                VALUES (?, ?, ?, ?)
+                """,
+                (guild_id, item_text.strip(), quantity, notes.strip()),
+            )
+            row = connection.execute("SELECT * FROM party_loot WHERE id = ?", (cursor.lastrowid,)).fetchone()
+        return self._build_party_loot(row)
+
+    def remove_party_loot(self, guild_id: int, loot_id: int) -> PartyLoot | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM party_loot WHERE id = ? AND guild_id = ?",
+                (loot_id, guild_id),
+            ).fetchone()
+            if row is None:
+                return None
+            connection.execute("DELETE FROM party_loot WHERE id = ? AND guild_id = ?", (loot_id, guild_id))
+        return self._build_party_loot(row)
+
+    def _build_npc(self, row: sqlite3.Row) -> NonPlayerCharacter:
+        return NonPlayerCharacter(
+            id=row["id"],
+            guild_id=row["guild_id"],
+            name=row["name"],
+            description=row["description"],
+            disposition=row["disposition"],
+            notes=row["notes"],
+        )
+
+    def list_npcs(self, guild_id: int) -> list[NonPlayerCharacter]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM npcs WHERE guild_id = ? ORDER BY lower(name), id",
+                (guild_id,),
+            ).fetchall()
+        return [self._build_npc(row) for row in rows]
+
+    def get_npc(self, guild_id: int, npc_id: int) -> NonPlayerCharacter | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM npcs WHERE id = ? AND guild_id = ?",
+                (npc_id, guild_id),
+            ).fetchone()
+        return self._build_npc(row) if row is not None else None
+
+    def create_npc(
+        self,
+        guild_id: int,
+        *,
+        name: str,
+        description: str = "",
+        disposition: str = "",
+        notes: str = "",
+    ) -> NonPlayerCharacter:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO npcs (guild_id, name, description, disposition, notes)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (guild_id, name.strip(), description.strip(), disposition.strip(), notes.strip()),
+            )
+            row = connection.execute("SELECT * FROM npcs WHERE id = ?", (cursor.lastrowid,)).fetchone()
+        return self._build_npc(row)
 
     def set_character_status(self, character_id: int, status: str) -> Character | None:
         with self._connect() as connection:
