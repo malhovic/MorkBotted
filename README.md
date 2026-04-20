@@ -107,11 +107,13 @@ This version updates the four core abilities:
 - Omens
 - Silver
 - Equipment
+- Optional class feature selection, such as `beast form: 2`
 - Notes
 
 Optional fields can be left blank. Equipment and notes can be entered as comma-separated lists.
 
 If the class name matches one of the stored templates, the bot links the character to that class and includes class-source details in sheet exports.
+If the character's class has a feature table, add the chosen feature in `class_feature` or notes. Category-specific entries like `beast form: 2` are preferred because they identify the exact table.
 
 ## Random character generation
 

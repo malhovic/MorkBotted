@@ -13,6 +13,13 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 from morkbotted.character import ABILITY_NAMES, EDITABLE_FIELDS, Character, ClassTemplate, normalize_ability_name
+from morkbotted.creation import (
+    append_class_feature_note,
+    apply_class_selection,
+    create_character_from_values,
+    parse_csv_field,
+    parse_int,
+)
 from morkbotted.generator import generate_random_character
 from morkbotted.storage import CharacterStore
 
@@ -37,14 +44,11 @@ max_hp:
 omens:
 silver:
 equipment:
+class_feature:
 notes:
 """
 
 logger = logging.getLogger(__name__)
-
-
-def parse_int(raw: str) -> int:
-    return int(raw.replace("+", ""))
 
 
 def build_character_sheet(character: Character) -> str:
@@ -100,19 +104,6 @@ async def send_interaction_text(
         await interaction.response.send_message(message, file=discord_file, ephemeral=ephemeral)
 
 
-def apply_class_selection(store: CharacterStore, character: Character, raw_class_name: str) -> Character:
-    resolved_class = store.find_class(raw_class_name)
-    if resolved_class:
-        character.class_id = resolved_class.id
-        character.class_name = resolved_class.name
-        character.class_template = resolved_class
-    else:
-        character.class_id = None
-        character.class_name = raw_class_name.strip() or "Classless"
-        character.class_template = None
-    return character
-
-
 def clamp_ability(value: int) -> int:
     return max(-3, min(6, value))
 
@@ -134,14 +125,6 @@ def parse_form_reply(reply_text: str) -> dict[str, str]:
         if normalized_key:
             data[normalized_key] = value.strip()
     return data
-
-
-def parse_csv_field(value: str | None) -> list[str]:
-    if not value:
-        return []
-    if value.strip().lower() == "skip":
-        return []
-    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 async def prompt_for_response(
@@ -205,47 +188,6 @@ def roll_dice(expression: str) -> tuple[list[int], int, int]:
 
     rolls = [random.randint(1, sides) for _ in range(count)]
     return rolls, modifier, sum(rolls) + modifier
-
-
-def create_character_from_values(
-    store: CharacterStore,
-    *,
-    user_id: int,
-    discord_name: str,
-    name: str,
-    class_name: str,
-    background: str,
-    description: str,
-    agility: str,
-    presence: str,
-    strength: str,
-    toughness: str,
-    hp: str,
-    max_hp: str,
-    omens: str,
-    silver: str,
-    equipment: str | None,
-    notes: str | None,
-) -> Character:
-    character = Character(
-        user_id=user_id,
-        discord_name=discord_name,
-        name=name.strip(),
-        background=background.strip(),
-        description=description.strip(),
-        agility=parse_int(agility),
-        presence=parse_int(presence),
-        strength=parse_int(strength),
-        toughness=parse_int(toughness),
-        hp=parse_int(hp),
-        max_hp=parse_int(max_hp),
-        omens=parse_int(omens),
-        silver=parse_int(silver),
-        equipment=parse_csv_field(equipment),
-        notes=parse_csv_field(notes),
-    )
-    apply_class_selection(store, character, class_name)
-    return store.upsert(character)
 
 
 def run_getting_better(character: Character, mode: str, manual_choices: dict[str, str] | None = None) -> list[str]:
@@ -485,7 +427,7 @@ def build_bot() -> commands.Bot:
             omens=omens,
             silver=silver,
             equipment=parse_csv_field(form_data.get("equipment")),
-            notes=parse_csv_field(form_data.get("notes")),
+            notes=append_class_feature_note(parse_csv_field(form_data.get("notes")), form_data.get("class_feature")),
         )
         apply_class_selection(store, character, form_data["class"])
         character = store.upsert(character)
@@ -926,6 +868,7 @@ def build_bot() -> commands.Bot:
         background="Short background",
         description="Short character description",
         equipment="Comma-separated equipment",
+        class_feature="Optional class feature or roll, like beast form: 2",
         notes="Comma-separated notes",
     )
     @app_commands.autocomplete(class_name=class_name_autocomplete)
@@ -944,6 +887,7 @@ def build_bot() -> commands.Bot:
         background: str = "",
         description: str = "",
         equipment: str = "",
+        class_feature: str = "",
         notes: str = "",
     ) -> None:
         try:
@@ -965,6 +909,7 @@ def build_bot() -> commands.Bot:
                 silver=silver,
                 equipment=equipment,
                 notes=notes,
+                class_feature=class_feature,
             )
         except ValueError:
             await interaction.response.send_message(

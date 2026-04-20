@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 from morkbotted.character import Character, ClassFeature, ClassTemplate
 from morkbotted.class_data import CLASS_SEED_DATA
@@ -18,11 +20,19 @@ class CharacterStore:
         self._repair_character_foreign_keys()
         self._maybe_migrate_json()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        return connection
+        try:
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     def _table_columns(self, connection: sqlite3.Connection, table_name: str) -> set[str]:
         rows = connection.execute(f"PRAGMA table_info({table_name})").fetchall()

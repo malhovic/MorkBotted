@@ -93,6 +93,7 @@ class Character:
 
     def export_text(self) -> str:
         buffer = StringIO()
+        selected_features = self.selected_class_features()
         buffer.write(f"{self.name}\n")
         buffer.write(f"Played by: {self.discord_name}\n")
         buffer.write(f"Class: {self.class_name}\n")
@@ -124,6 +125,14 @@ class Character:
                 buffer.write(f"Omen Die: {self.class_template.omen_die}\n")
             if self.class_template.notes:
                 buffer.write(f"Notes: {self.class_template.notes}\n")
+        if selected_features:
+            buffer.write("\nClass Features\n")
+            for feature in selected_features:
+                prefix = f"[{feature.roll_label}] " if feature.roll_label else ""
+                buffer.write(f"- {prefix}{feature.name}: {feature.description}\n")
+        elif self.class_template and self.class_template.features:
+            buffer.write("\nClass Features\n")
+            buffer.write("- None recorded for this character.\n")
         buffer.write("\nEquipment\n")
         if self.equipment:
             for item in self.equipment:
@@ -139,6 +148,7 @@ class Character:
         return buffer.getvalue().strip()
 
     def sheet_lines(self) -> list[str]:
+        selected_features = self.selected_class_features()
         lines = [
             f"**{self.name}** ({self.class_name})",
             f"Status `{self.status}`",
@@ -157,7 +167,25 @@ class Character:
         ]
         if self.class_template:
             lines.append(f"Class Source: {self.class_template.source}")
+        for feature in selected_features:
+            prefix = f"[{feature.roll_label}] " if feature.roll_label else ""
+            lines.append(f"Class Feature: {prefix}{feature.name}: {feature.description}")
+        if self.class_template and self.class_template.features and not selected_features:
+            lines.append("Class Feature: None recorded.")
         return lines
+
+    def selected_class_features(self) -> list[ClassFeature]:
+        if not self.class_template:
+            return []
+
+        selected: list[ClassFeature] = []
+        for note in self.notes:
+            for feature in self.class_template.features:
+                if feature in selected:
+                    continue
+                if note_selects_feature(note, feature):
+                    selected.append(feature)
+        return selected
 
 
 def normalize_ability_name(raw: str) -> str:
@@ -166,3 +194,37 @@ def normalize_ability_name(raw: str) -> str:
         options = ", ".join(ABILITY_NAMES)
         raise ValueError(f"Unknown ability '{raw}'. Use one of: {options}.")
     return normalized
+
+
+def note_selects_feature(note: str, feature: ClassFeature) -> bool:
+    normalized_note = normalize_feature_selector(note)
+    normalized_name = normalize_feature_selector(feature.name)
+    normalized_roll = normalize_feature_selector(feature.roll_label)
+
+    if normalized_note == normalized_name:
+        return True
+    if normalized_roll and normalized_note == normalized_roll:
+        return True
+    if normalized_note.startswith(f"{normalized_name}:"):
+        return True
+    if normalized_name and normalized_name in normalized_note:
+        return True
+
+    label_prefixes = (
+        "class feature",
+        "class_feature",
+        "feature",
+        feature.category,
+        feature.category.replace("_", " "),
+    )
+    for label in label_prefixes:
+        normalized_label = normalize_feature_selector(label)
+        if normalized_note.startswith(f"{normalized_label}:"):
+            value = normalize_feature_selector(normalized_note.split(":", 1)[1]).strip("[]")
+            return value == normalized_name or bool(normalized_roll and value == normalized_roll)
+
+    return False
+
+
+def normalize_feature_selector(raw: str) -> str:
+    return " ".join(raw.lower().strip().split())

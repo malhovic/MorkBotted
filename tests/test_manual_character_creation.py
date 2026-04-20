@@ -1,0 +1,107 @@
+import unittest
+from pathlib import Path
+
+from morkbotted.creation import append_class_feature_note, create_character_from_values
+from morkbotted.storage import CharacterStore
+
+
+class ManualCharacterCreationTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.db_path = Path("data") / "manual_creation_test.db"
+        self._remove_test_db()
+
+    def tearDown(self) -> None:
+        self._remove_test_db()
+
+    def _remove_test_db(self) -> None:
+        for path in (
+            self.db_path,
+            self.db_path.with_name(f"{self.db_path.name}-journal"),
+            self.db_path.with_name(f"{self.db_path.name}-wal"),
+            self.db_path.with_name(f"{self.db_path.name}-shm"),
+        ):
+            if path.exists():
+                path.unlink()
+
+    def test_manual_skinwalker_create_saves_and_renders_selected_beast_form(self) -> None:
+        store = CharacterStore(self.db_path)
+
+        created = create_character_from_values(
+            store,
+            user_id=98468186063663104,
+            discord_name="malhovic",
+            name="Skarn",
+            class_name="Cursed Skinwalker",
+            background="",
+            description="Cruel. Deceitful. Forgotten by himself.",
+            agility="1",
+            presence="-1",
+            strength="2",
+            toughness="2",
+            hp="9",
+            max_hp="9",
+            omens="2",
+            silver="90",
+            equipment="rusty knife, no armor",
+            class_feature="beast form: 2",
+            notes="",
+        )
+
+        self.assertIsNotNone(created.id)
+
+        reloaded = store.get_character_by_id(created.id)
+        self.assertIsNotNone(reloaded)
+        assert reloaded is not None
+
+        sheet = "\n".join(reloaded.sheet_lines())
+        export = reloaded.export_text()
+
+        self.assertEqual(reloaded.class_name, "Cursed Skinwalker")
+        self.assertIsNotNone(reloaded.class_template)
+        self.assertIn("rusty knife", reloaded.equipment)
+        self.assertIn("beast form: 2", reloaded.notes)
+        self.assertIn("Class Feature: [2] Flayed and Dripping Wolf", sheet)
+        self.assertIn("- [2] Flayed and Dripping Wolf", export)
+        self.assertNotIn("Class Feature: None recorded.", sheet)
+        self.assertNotIn("Murder-Plagued Rat", sheet)
+        self.assertNotIn("Murder-Plagued Rat", export)
+
+    def test_manual_skinwalker_create_without_feature_is_explicit(self) -> None:
+        store = CharacterStore(self.db_path)
+
+        created = create_character_from_values(
+            store,
+            user_id=98468186063663104,
+            discord_name="malhovic",
+            name="Skarn",
+            class_name="Cursed Skinwalker",
+            background="",
+            description="Cruel. Deceitful. Forgotten by himself.",
+            agility="1",
+            presence="-1",
+            strength="2",
+            toughness="2",
+            hp="9",
+            max_hp="9",
+            omens="2",
+            silver="90",
+            equipment="",
+            class_feature="",
+            notes="",
+        )
+
+        sheet = "\n".join(created.sheet_lines())
+        export = created.export_text()
+
+        self.assertIn("Class Feature: None recorded.", sheet)
+        self.assertIn("- None recorded for this character.", export)
+        self.assertNotIn("Flayed and Dripping Wolf", sheet)
+
+    def test_class_feature_note_helper_preserves_existing_notes(self) -> None:
+        notes = append_class_feature_note(["Generated manually."], "beast form: 2")
+
+        self.assertEqual(notes, ["Generated manually.", "beast form: 2"])
+
+
+if __name__ == "__main__":
+    unittest.main()
