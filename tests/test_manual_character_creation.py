@@ -209,6 +209,33 @@ class ManualCharacterCreationTest(unittest.TestCase):
         self.assertEqual(raised.exception.field_name, "class_name")
         self.assertIn("autocompleted stored classes", str(raised.exception))
 
+    def test_manual_create_rejects_overlong_notes(self) -> None:
+        store = CharacterStore(self.db_path)
+
+        with self.assertRaises(CharacterCreationError) as raised:
+            create_character_from_values(
+                store,
+                user_id=98468186063663104,
+                discord_name="malhovic",
+                name="Skarn",
+                class_name="Cursed Skinwalker",
+                background="",
+                description="Cruel. Deceitful. Forgotten by himself.",
+                agility="1",
+                presence="-1",
+                strength="2",
+                toughness="2",
+                hp="9",
+                max_hp="9",
+                omens="2",
+                silver="90",
+                equipment="",
+                class_feature="",
+                notes="x" * 501,
+            )
+
+        self.assertIn("500 characters or fewer", str(raised.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

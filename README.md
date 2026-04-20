@@ -165,7 +165,11 @@ Use these commands to manage a roster:
 
 ## GM commands
 
-GM commands are slash-only, server-scoped, and default to Discord's Manage Server permission. They only read or write data for the server where the command is used.
+GM commands are slash-only and server-scoped. They only read or write data for the server where the command is used.
+
+By default, GM commands require either Discord's Manage Server permission or a server role named `scvm-gm`. You can change the role name with `GM_ROLE_NAME` in `.env`. Leave `GM_ROLE_NAME` blank if you only want Manage Server to grant GM access.
+
+The bot enforces this check itself so GMs do not need broad Discord permissions. If you also want the commands hidden from everyone else in the slash-command picker, restrict the GM commands to the same role in Discord's server settings under Integrations.
 
 Use these commands to manage table-facing campaign state:
 

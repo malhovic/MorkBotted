@@ -162,6 +162,27 @@ class CharacterRenderingTest(unittest.TestCase):
         self.assertIn("Notes: Remember: Flayed and Dripping Wolf owes the butcher a favor.", short_sheet)
         self.assertIn("Class Feature: None recorded.", short_sheet)
 
+    def test_character_sheet_escapes_discord_markdown_in_user_fields(self) -> None:
+        character = Character(
+            user_id=1,
+            discord_name="Player",
+            name="**@everyone**",
+            class_name="Doomed_Player",
+            background="```fake bot output```",
+            description="Look > here",
+            equipment=["blade `ping`"],
+            notes=["secret *note*"],
+        )
+
+        short_sheet = "\n".join(character.sheet_lines())
+
+        self.assertIn(r"\*\*@everyone\*\*", short_sheet)
+        self.assertIn(r"Doomed\_Player", short_sheet)
+        self.assertIn(r"\`\`\`fake bot output\`\`\`", short_sheet)
+        self.assertIn(r"Look \> here", short_sheet)
+        self.assertIn(r"blade \`ping\`", short_sheet)
+        self.assertIn(r"secret \*note\*", short_sheet)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,7 @@ from typing import Iterator
 
 from morkbotted.character import Character, ClassFeature, ClassTemplate
 from morkbotted.class_data import CLASS_SEED_DATA
+from morkbotted.security import MAX_EQUIPMENT_ITEMS, MAX_NOTES, validate_text, validate_text_list
 
 
 @dataclass
@@ -631,6 +632,13 @@ class CharacterStore:
         return [character for character in (self._get_character_by_row(row) for row in rows) if character is not None]
 
     def upsert(self, character: Character) -> Character:
+        character.name = validate_text(character.name, "name", required=True)
+        character.class_name = validate_text(character.class_name, "class_name", required=True)
+        character.background = validate_text(character.background, "background")
+        character.description = validate_text(character.description, "description")
+        character.equipment = validate_text_list(character.equipment, "equipment", max_items=MAX_EQUIPMENT_ITEMS)
+        character.notes = validate_text_list(character.notes, "note", max_items=MAX_NOTES)
+
         with self._connect() as connection:
             if character.id is None:
                 cursor = connection.execute(
@@ -750,13 +758,15 @@ class CharacterStore:
     def add_party_loot(self, guild_id: int, item_text: str, quantity: int = 1, notes: str = "") -> PartyLoot:
         if quantity < 1:
             raise ValueError("Loot quantity must be at least 1.")
+        clean_item = validate_text(item_text, "loot_item", required=True)
+        clean_notes = validate_text(notes, "loot_notes")
         with self._connect() as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO party_loot (guild_id, item_text, quantity, notes)
                 VALUES (?, ?, ?, ?)
                 """,
-                (guild_id, item_text.strip(), quantity, notes.strip()),
+                (guild_id, clean_item, quantity, clean_notes),
             )
             row = connection.execute("SELECT * FROM party_loot WHERE id = ?", (cursor.lastrowid,)).fetchone()
         return self._build_party_loot(row)
@@ -807,13 +817,17 @@ class CharacterStore:
         disposition: str = "",
         notes: str = "",
     ) -> NonPlayerCharacter:
+        clean_name = validate_text(name, "npc_name", required=True)
+        clean_description = validate_text(description, "npc_description")
+        clean_disposition = validate_text(disposition, "npc_disposition")
+        clean_notes = validate_text(notes, "npc_notes")
         with self._connect() as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO npcs (guild_id, name, description, disposition, notes)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (guild_id, name.strip(), description.strip(), disposition.strip(), notes.strip()),
+                (guild_id, clean_name, clean_description, clean_disposition, clean_notes),
             )
             row = connection.execute("SELECT * FROM npcs WHERE id = ?", (cursor.lastrowid,)).fetchone()
         return self._build_npc(row)

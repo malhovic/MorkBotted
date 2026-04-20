@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass, field
 from io import StringIO
 from typing import Any
 
+from morkbotted.security import escape_discord_text
+
 ABILITY_ALIASES = {
     "agi": "agility",
     "agility": "agility",
@@ -150,9 +152,16 @@ class Character:
 
     def sheet_lines(self) -> list[str]:
         selected_features = self.selected_class_features()
+        name = escape_discord_text(self.name)
+        class_name = escape_discord_text(self.class_name)
+        status = escape_discord_text(self.status)
+        background = escape_discord_text(self.background) if self.background else "None recorded."
+        description = escape_discord_text(self.description) if self.description else "None recorded."
+        equipment = ", ".join(escape_discord_text(item) for item in self.equipment) if self.equipment else "None recorded."
+        notes = " | ".join(escape_discord_text(note) for note in self.notes) if self.notes else "None recorded."
         lines = [
-            f"**{self.name}** ({self.class_name})",
-            f"Status `{self.status}`",
+            f"**{name}** ({class_name})",
+            f"Status `{status}`",
             f"HP `{self.hp}/{self.max_hp}` | Omens `{self.omens}` | Silver `{self.silver}`",
             (
                 "Abilities "
@@ -161,18 +170,21 @@ class Character:
                 f"`STR {self.strength:+d}` "
                 f"`TGH {self.toughness:+d}`"
             ),
-            f"Background: {self.background or 'None recorded.'}",
-            f"Description: {self.description or 'None recorded.'}",
-            "Equipment: " + (", ".join(self.equipment) if self.equipment else "None recorded."),
-            "Notes: " + (" | ".join(self.notes) if self.notes else "None recorded."),
+            f"Background: {background}",
+            f"Description: {description}",
+            "Equipment: " + equipment,
+            "Notes: " + notes,
         ]
         if self.class_template:
-            lines.append(f"Class Source: {self.class_template.source}")
+            lines.append(f"Class Source: {escape_discord_text(self.class_template.source)}")
             if self.class_template.omen_die:
-                lines.append(f"Daily Omens: {self.class_template.omen_die}")
+                lines.append(f"Daily Omens: {escape_discord_text(self.class_template.omen_die)}")
         for feature in selected_features:
-            prefix = f"[{feature.roll_label}] " if feature.roll_label else ""
-            lines.append(f"Class Feature: {prefix}{feature.name}: {feature.description}")
+            prefix = f"[{escape_discord_text(feature.roll_label)}] " if feature.roll_label else ""
+            lines.append(
+                "Class Feature: "
+                f"{prefix}{escape_discord_text(feature.name)}: {escape_discord_text(feature.description)}"
+            )
         if self.class_template and self.class_template.features and not selected_features:
             lines.append("Class Feature: None recorded.")
         return lines

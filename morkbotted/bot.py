@@ -21,6 +21,14 @@ from morkbotted.creation import (
 )
 from morkbotted.generator import generate_random_character
 from morkbotted.omens import omen_status_text, roll_daily_omens
+from morkbotted.security import (
+    MAX_EQUIPMENT_ITEMS,
+    MAX_NOTES,
+    escape_discord_text,
+    member_has_gm_access,
+    safe_export_filename,
+    validate_text,
+)
 from morkbotted.storage import CharacterStore, NonPlayerCharacter, PartyLoot
 
 DICE_PATTERN = re.compile(r"^(?P<count>\d*)d(?P<sides>\d+)(?P<modifier>[+-]\d+)?$", re.IGNORECASE)
@@ -88,20 +96,18 @@ def build_class_summary(class_template: ClassTemplate) -> str:
 def format_notes(character: Character) -> str:
     if not character.notes:
         return "No notes recorded."
-    return "\n".join(f"{index}. {note}" for index, note in enumerate(character.notes, start=1))
+    return "\n".join(f"{index}. {escape_discord_text(note)}" for index, note in enumerate(character.notes, start=1))
 
 
 def add_character_note(character: Character, note: str) -> None:
-    clean_note = note.strip()
-    if not clean_note:
-        raise ValueError("Note text cannot be blank.")
+    if len(character.notes) >= MAX_NOTES:
+        raise ValueError(f"Characters can have at most {MAX_NOTES} notes.")
+    clean_note = validate_text(note, "note", required=True)
     character.notes.append(clean_note)
 
 
 def update_character_note(character: Character, note_number: int, note: str) -> None:
-    clean_note = note.strip()
-    if not clean_note:
-        raise ValueError("Note text cannot be blank.")
+    clean_note = validate_text(note, "note", required=True)
     if not character.notes:
         raise ValueError("No notes recorded.")
     if note_number < 1 or note_number > len(character.notes):
@@ -271,7 +277,7 @@ def apply_omen_action(character: Character, action: str, amount: int | None = No
     if normalized in {"roll", "daily", "newday", "new-day"}:
         rolled = roll_daily_omens(character)
         character.omens = rolled
-        return f"**{character.name}** rolls daily omens and gets `{rolled}`. {omen_status_text(character)}"
+        return f"**{escape_discord_text(character.name)}** rolls daily omens and gets `{rolled}`. {omen_status_text(character)}"
 
     if normalized in {"set", "record"}:
         if amount is None:
@@ -279,7 +285,7 @@ def apply_omen_action(character: Character, action: str, amount: int | None = No
         if amount < 0:
             raise ValueError("Omens cannot be below 0.")
         character.omens = amount
-        return f"**{character.name}** now has `{character.omens}` omen(s) recorded. {omen_status_text(character)}"
+        return f"**{escape_discord_text(character.name)}** now has `{character.omens}` omen(s) recorded. {omen_status_text(character)}"
 
     raise ValueError("Use `status`, `roll`, or `set`.")
 
@@ -306,14 +312,29 @@ def require_interaction_guild_id(interaction: discord.Interaction) -> int | None
     return interaction.guild_id
 
 
+async def require_gm_access(interaction: discord.Interaction, gm_role_name: str | None) -> bool:
+    if not isinstance(interaction.user, discord.Member):
+        await interaction.response.send_message("Use this in a server so I can check GM access.", ephemeral=True)
+        return False
+    if member_has_gm_access(interaction.user, gm_role_name):
+        return True
+
+    if gm_role_name:
+        message = f"You need the `{escape_discord_text(gm_role_name)}` role or Manage Server permission to use GM commands."
+    else:
+        message = "You need Manage Server permission to use GM commands."
+    await interaction.response.send_message(message, ephemeral=True)
+    return False
+
+
 def format_gm_character_list(characters: list[Character]) -> str:
     if not characters:
         return "No active characters are registered for this server."
     lines = ["Active characters in this server:"]
     for character in characters:
         lines.append(
-            f"- #{character.id} **{character.name}** ({character.class_name}) "
-            f"played by {character.discord_name}: HP `{character.hp}/{character.max_hp}`, "
+            f"- #{character.id} **{escape_discord_text(character.name)}** ({escape_discord_text(character.class_name)}) "
+            f"played by {escape_discord_text(character.discord_name)}: HP `{character.hp}/{character.max_hp}`, "
             f"Omens `{character.omens}`, Silver `{character.silver}`"
         )
     return "\n".join(lines)
@@ -324,8 +345,8 @@ def format_party_loot(loot_items: list[PartyLoot]) -> str:
         return "No party loot recorded for this server."
     lines = ["Party loot:"]
     for item in loot_items:
-        notes = f" - {item.notes}" if item.notes else ""
-        lines.append(f"- #{item.id} {item.quantity}x {item.item_text}{notes}")
+        notes = f" - {escape_discord_text(item.notes)}" if item.notes else ""
+        lines.append(f"- #{item.id} {item.quantity}x {escape_discord_text(item.item_text)}{notes}")
     return "\n".join(lines)
 
 
@@ -334,20 +355,20 @@ def format_npc_list(npcs: list[NonPlayerCharacter]) -> str:
         return "No NPCs recorded for this server."
     lines = ["NPCs:"]
     for npc in npcs:
-        disposition = f" [{npc.disposition}]" if npc.disposition else ""
-        summary = f": {npc.description}" if npc.description else ""
-        lines.append(f"- #{npc.id} **{npc.name}**{disposition}{summary}")
+        disposition = f" [{escape_discord_text(npc.disposition)}]" if npc.disposition else ""
+        summary = f": {escape_discord_text(npc.description)}" if npc.description else ""
+        lines.append(f"- #{npc.id} **{escape_discord_text(npc.name)}**{disposition}{summary}")
     return "\n".join(lines)
 
 
 def format_npc_detail(npc: NonPlayerCharacter) -> str:
-    lines = [f"**{npc.name}** #{npc.id}"]
+    lines = [f"**{escape_discord_text(npc.name)}** #{npc.id}"]
     if npc.disposition:
-        lines.append(f"Disposition: {npc.disposition}")
+        lines.append(f"Disposition: {escape_discord_text(npc.disposition)}")
     if npc.description:
-        lines.append(f"Description: {npc.description}")
+        lines.append(f"Description: {escape_discord_text(npc.description)}")
     if npc.notes:
-        lines.append(f"Notes: {npc.notes}")
+        lines.append(f"Notes: {escape_discord_text(npc.notes)}")
     return "\n".join(lines)
 
 
@@ -361,12 +382,18 @@ def build_bot() -> commands.Bot:
     data_dir = Path(os.getenv("DATA_DIR", "data"))
     db_path = Path(os.getenv("DB_PATH", str(data_dir / "morkbotted.db")))
     sync_guild_id = os.getenv("COMMAND_SYNC_GUILD_ID", "").strip()
+    gm_role_name = os.getenv("GM_ROLE_NAME", "scvm-gm").strip() or None
     enable_message_content = os.getenv("ENABLE_MESSAGE_CONTENT_INTENT", "").strip().lower() in TRUE_ENV_VALUES
 
     intents = discord.Intents.default()
     intents.message_content = enable_message_content
 
-    bot = commands.Bot(command_prefix=prefix, intents=intents, help_command=None)
+    bot = commands.Bot(
+        command_prefix=prefix,
+        intents=intents,
+        help_command=None,
+        allowed_mentions=discord.AllowedMentions.none(),
+    )
     store = CharacterStore(db_path)
     slash_synced = False
 
@@ -580,7 +607,7 @@ def build_bot() -> commands.Bot:
         class_template = store.find_class(class_name)
         if class_template is None:
             raise commands.BadArgument(
-                f"No stored class named `{class_name}`. Try `{prefix}classes` to see available options."
+                f"No stored class named `{escape_discord_text(class_name)}`. Try `{prefix}classes` to see available options."
             )
         await ctx.send(build_class_summary(class_template))
 
@@ -648,7 +675,7 @@ def build_bot() -> commands.Bot:
             store.set_active_character(ctx.guild.id, ctx.author.id, character.id)
         await dm_channel.send("Character created and saved.")
         await dm_channel.send(build_character_sheet(character))
-        await ctx.send(f"Saved **{character.name}** from your DM form.")
+        await ctx.send(f"Saved **{escape_discord_text(character.name)}** from your DM form.")
 
     @bot.command(name="gettingbetter")
     async def gettingbetter(ctx: commands.Context) -> None:
@@ -744,9 +771,9 @@ def build_bot() -> commands.Bot:
 
         character.discord_name = ctx.author.display_name
         store.upsert(character)
-        await dm_channel.send(f"**{character.name}** has gotten better.\n" + "\n".join(summaries))
+        await dm_channel.send(f"**{escape_discord_text(character.name)}** has gotten better.\n" + "\n".join(summaries))
         await dm_channel.send(build_character_sheet(character))
-        await ctx.send(f"Updated **{character.name}** through DM.")
+        await ctx.send(f"Updated **{escape_discord_text(character.name)}** through DM.")
 
     @bot.command(name="sheet")
     async def sheet(ctx: commands.Context) -> None:
@@ -758,8 +785,8 @@ def build_bot() -> commands.Bot:
         character = require_character_for_ctx(ctx)
         payload = BytesIO(character.export_text().encode("utf-8"))
         await ctx.send(
-            content=f"Export for **{character.name}**",
-            file=discord.File(payload, filename=f"{character.name.replace(' ', '_').lower()}_sheet.txt"),
+            content=f"Export for **{escape_discord_text(character.name)}**",
+            file=discord.File(payload, filename=safe_export_filename(character.id, character.name)),
         )
 
     @bot.command(name="setstat")
@@ -770,7 +797,7 @@ def build_bot() -> commands.Bot:
         character.discord_name = ctx.author.display_name
         character.set_ability(normalized, parsed_value)
         store.upsert(character)
-        await ctx.send(f"{normalized.title()} set to `{parsed_value:+d}` for **{character.name}**.")
+        await ctx.send(f"{normalized.title()} set to `{parsed_value:+d}` for **{escape_discord_text(character.name)}**.")
 
     @bot.command(name="setfield")
     async def setfield(ctx: commands.Context, field_name: str, *, value: str) -> None:
@@ -784,12 +811,12 @@ def build_bot() -> commands.Bot:
         if normalized in {"hp", "max_hp", "omens", "silver"}:
             setattr(character, normalized, parse_int(value))
         elif normalized == "class_name":
-            apply_class_selection(store, character, value)
+            apply_class_selection(store, character, validate_text(value, "class_name"))
         else:
-            setattr(character, normalized, value.strip())
+            setattr(character, normalized, validate_text(value, normalized))
 
         store.upsert(character)
-        await ctx.send(f"{normalized} updated for **{character.name}**.")
+        await ctx.send(f"{normalized} updated for **{escape_discord_text(character.name)}**.")
 
     @bot.command(name="improve")
     async def improve(ctx: commands.Context, field_name: str, delta: str) -> None:
@@ -812,7 +839,7 @@ def build_bot() -> commands.Bot:
         character.discord_name = ctx.author.display_name
         store.upsert(character)
         await ctx.send(
-            f"{normalized} adjusted by `{amount:+d}`. New value for **{character.name}**: `{new_value:+d}`"
+            f"{normalized} adjusted by `{amount:+d}`. New value for **{escape_discord_text(character.name)}**: `{new_value:+d}`"
         )
 
     @bot.command(name="omens")
@@ -833,9 +860,12 @@ def build_bot() -> commands.Bot:
     async def additem(ctx: commands.Context, *, item: str) -> None:
         character = require_character_for_ctx(ctx)
         character.discord_name = ctx.author.display_name
-        character.equipment.append(item.strip())
+        if len(character.equipment) >= MAX_EQUIPMENT_ITEMS:
+            raise commands.BadArgument(f"Characters can have at most {MAX_EQUIPMENT_ITEMS} equipment entries.")
+        clean_item = validate_text(item, "equipment", required=True)
+        character.equipment.append(clean_item)
         store.upsert(character)
-        await ctx.send(f"Added `{item.strip()}` to **{character.name}**.")
+        await ctx.send(f"Added `{escape_discord_text(clean_item)}` to **{escape_discord_text(character.name)}**.")
 
     @bot.command(name="removeitem")
     async def removeitem(ctx: commands.Context, *, item: str) -> None:
@@ -844,9 +874,9 @@ def build_bot() -> commands.Bot:
         try:
             character.equipment.remove(target)
         except ValueError as error:
-            raise commands.BadArgument(f"`{target}` was not found on your equipment list.") from error
+            raise commands.BadArgument(f"`{escape_discord_text(target)}` was not found on your equipment list.") from error
         store.upsert(character)
-        await ctx.send(f"Removed `{target}` from **{character.name}**.")
+        await ctx.send(f"Removed `{escape_discord_text(target)}` from **{escape_discord_text(character.name)}**.")
 
     @bot.command(name="addnote")
     async def addnote(ctx: commands.Context, *, note: str) -> None:
@@ -857,12 +887,12 @@ def build_bot() -> commands.Bot:
             raise commands.BadArgument(str(error)) from error
         character.discord_name = ctx.author.display_name
         store.upsert(character)
-        await ctx.send(f"Added note to **{character.name}**.\n{format_notes(character)}")
+        await ctx.send(f"Added note to **{escape_discord_text(character.name)}**.\n{format_notes(character)}")
 
     @bot.command(name="notes")
     async def notes(ctx: commands.Context) -> None:
         character = require_character_for_ctx(ctx)
-        await ctx.send(f"Notes for **{character.name}**:\n{format_notes(character)}")
+        await ctx.send(f"Notes for **{escape_discord_text(character.name)}**:\n{format_notes(character)}")
 
     @bot.command(name="editnote")
     async def editnote(ctx: commands.Context, note_number: int, *, note: str) -> None:
@@ -873,7 +903,7 @@ def build_bot() -> commands.Bot:
             raise commands.BadArgument(str(error)) from error
         character.discord_name = ctx.author.display_name
         store.upsert(character)
-        await ctx.send(f"Updated note `{note_number}` for **{character.name}**.\n{format_notes(character)}")
+        await ctx.send(f"Updated note `{note_number}` for **{escape_discord_text(character.name)}**.\n{format_notes(character)}")
 
     @bot.command(name="removenote")
     async def removenote(ctx: commands.Context, note_number: int) -> None:
@@ -884,7 +914,10 @@ def build_bot() -> commands.Bot:
             raise commands.BadArgument(str(error)) from error
         character.discord_name = ctx.author.display_name
         store.upsert(character)
-        await ctx.send(f"Removed note `{note_number}` from **{character.name}**: {removed_note}\n{format_notes(character)}")
+        await ctx.send(
+            f"Removed note `{note_number}` from **{escape_discord_text(character.name)}**: "
+            f"{escape_discord_text(removed_note)}\n{format_notes(character)}"
+        )
 
     @bot.command(name="roll")
     async def roll(ctx: commands.Context, target: str, dr: int = DEFAULT_DR) -> None:
@@ -897,7 +930,7 @@ def build_bot() -> commands.Bot:
             total = die + modifier
             outcome = "Success" if total >= dr else "Failure"
             await ctx.send(
-                f"**{character.name}** rolls `{ability_name.title()}`: "
+                f"**{escape_discord_text(character.name)}** rolls `{ability_name.title()}`: "
                 f"`d20({die}) {modifier:+d} = {total}` vs DR `{dr}` -> **{outcome}**"
             )
             return
@@ -926,7 +959,7 @@ def build_bot() -> commands.Bot:
         class_template = store.find_class(class_name)
         if class_template is None:
             await interaction.response.send_message(
-                f"No stored class named `{class_name}`. Try `/classes` first.",
+                f"No stored class named `{escape_discord_text(class_name)}`. Try `/classes` first.",
                 ephemeral=True,
             )
             return
@@ -945,7 +978,10 @@ def build_bot() -> commands.Bot:
         lines = []
         for character in characters:
             active_marker = " <- active here" if active_id == character.id else ""
-            lines.append(f"- #{character.id} **{character.name}** [{character.status}] ({character.class_name}){active_marker}")
+            lines.append(
+                f"- #{character.id} **{escape_discord_text(character.name)}** "
+                f"[{escape_discord_text(character.status)}] ({escape_discord_text(character.class_name)}){active_marker}"
+            )
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
     @bot.tree.command(name="character-switch", description="Set your active character for this server.")
@@ -963,7 +999,10 @@ def build_bot() -> commands.Bot:
             await interaction.response.send_message("That character is missing an internal id and cannot be activated.", ephemeral=True)
             return
         store.set_active_character(interaction.guild_id, interaction.user.id, selected.id)
-        await interaction.response.send_message(f"Active character for this server is now **{selected.name}**.", ephemeral=True)
+        await interaction.response.send_message(
+            f"Active character for this server is now **{escape_discord_text(selected.name)}**.",
+            ephemeral=True,
+        )
 
     @bot.tree.command(name="character-archive", description="Mark one of your characters as archived, dead, or NPC.")
     @app_commands.describe(character="Character name or id", status="New stored status")
@@ -998,7 +1037,7 @@ def build_bot() -> commands.Bot:
                 else:
                     store.clear_active_character(interaction.guild_id, interaction.user.id)
         await interaction.response.send_message(
-            f"Character **{updated.name}** is now marked `{updated.status}`.",
+            f"Character **{escape_discord_text(updated.name)}** is now marked `{escape_discord_text(updated.status)}`.",
             ephemeral=True,
         )
 
@@ -1011,12 +1050,16 @@ def build_bot() -> commands.Bot:
             await interaction.response.send_message("I couldn't find a character matching that selection.", ephemeral=True)
             return
         store.delete_character(selected.id)
-        await interaction.response.send_message(f"Deleted character **{selected.name}**.", ephemeral=True)
+        await interaction.response.send_message(
+            f"Deleted character **{escape_discord_text(selected.name)}**.",
+            ephemeral=True,
+        )
 
     @bot.tree.command(name="gm-characters", description="GM: List active characters for this server only.")
     @app_commands.guild_only()
-    @app_commands.default_permissions(manage_guild=True)
     async def slash_gm_characters(interaction: discord.Interaction) -> None:
+        if not await require_gm_access(interaction, gm_role_name):
+            return
         guild_id = require_interaction_guild_id(interaction)
         if guild_id is None:
             await interaction.response.send_message("Use this in a server so I can scope the party list correctly.", ephemeral=True)
@@ -1028,8 +1071,9 @@ def build_bot() -> commands.Bot:
 
     @bot.tree.command(name="gm-party-loot", description="GM: List party loot for this server.")
     @app_commands.guild_only()
-    @app_commands.default_permissions(manage_guild=True)
     async def slash_gm_party_loot(interaction: discord.Interaction) -> None:
+        if not await require_gm_access(interaction, gm_role_name):
+            return
         guild_id = require_interaction_guild_id(interaction)
         if guild_id is None:
             await interaction.response.send_message("Use this in a server so I can scope the loot correctly.", ephemeral=True)
@@ -1043,7 +1087,6 @@ def build_bot() -> commands.Bot:
 
     @bot.tree.command(name="gm-party-loot-add", description="GM: Add shared party loot for this server.")
     @app_commands.guild_only()
-    @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(item="Loot item", quantity="How many", notes="Optional GM-facing notes")
     async def slash_gm_party_loot_add(
         interaction: discord.Interaction,
@@ -1051,28 +1094,30 @@ def build_bot() -> commands.Bot:
         quantity: int = 1,
         notes: str = "",
     ) -> None:
+        if not await require_gm_access(interaction, gm_role_name):
+            return
         guild_id = require_interaction_guild_id(interaction)
         if guild_id is None:
             await interaction.response.send_message("Use this in a server so I can scope the loot correctly.", ephemeral=True)
             return
-        if not item.strip():
-            await interaction.response.send_message("Loot item cannot be blank.", ephemeral=True)
-            return
         try:
-            loot = store.add_party_loot(guild_id, item, quantity, notes)
+            clean_item = validate_text(item, "loot_item", required=True)
+            clean_notes = validate_text(notes, "loot_notes")
+            loot = store.add_party_loot(guild_id, clean_item, quantity, clean_notes)
         except ValueError as error:
             await interaction.response.send_message(str(error), ephemeral=True)
             return
         await interaction.response.send_message(
-            f"Added party loot #{loot.id}: {loot.quantity}x {loot.item_text}",
+            f"Added party loot #{loot.id}: {loot.quantity}x {escape_discord_text(loot.item_text)}",
             ephemeral=True,
         )
 
     @bot.tree.command(name="gm-party-loot-remove", description="GM: Remove shared party loot by id.")
     @app_commands.guild_only()
-    @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(loot_id="Loot id from `/gm-party-loot`")
     async def slash_gm_party_loot_remove(interaction: discord.Interaction, loot_id: int) -> None:
+        if not await require_gm_access(interaction, gm_role_name):
+            return
         guild_id = require_interaction_guild_id(interaction)
         if guild_id is None:
             await interaction.response.send_message("Use this in a server so I can scope the loot correctly.", ephemeral=True)
@@ -1082,14 +1127,15 @@ def build_bot() -> commands.Bot:
             await interaction.response.send_message(f"No party loot #{loot_id} exists in this server.", ephemeral=True)
             return
         await interaction.response.send_message(
-            f"Removed party loot #{removed.id}: {removed.quantity}x {removed.item_text}",
+            f"Removed party loot #{removed.id}: {removed.quantity}x {escape_discord_text(removed.item_text)}",
             ephemeral=True,
         )
 
     @bot.tree.command(name="gm-npcs", description="GM: List NPCs for this server.")
     @app_commands.guild_only()
-    @app_commands.default_permissions(manage_guild=True)
     async def slash_gm_npcs(interaction: discord.Interaction) -> None:
+        if not await require_gm_access(interaction, gm_role_name):
+            return
         guild_id = require_interaction_guild_id(interaction)
         if guild_id is None:
             await interaction.response.send_message("Use this in a server so I can scope NPCs correctly.", ephemeral=True)
@@ -1103,9 +1149,10 @@ def build_bot() -> commands.Bot:
 
     @bot.tree.command(name="gm-npc", description="GM: Show one NPC for this server.")
     @app_commands.guild_only()
-    @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(npc_id="NPC id from `/gm-npcs`")
     async def slash_gm_npc(interaction: discord.Interaction, npc_id: int) -> None:
+        if not await require_gm_access(interaction, gm_role_name):
+            return
         guild_id = require_interaction_guild_id(interaction)
         if guild_id is None:
             await interaction.response.send_message("Use this in a server so I can scope NPCs correctly.", ephemeral=True)
@@ -1118,7 +1165,6 @@ def build_bot() -> commands.Bot:
 
     @bot.tree.command(name="gm-npc-create", description="GM: Create an NPC for this server.")
     @app_commands.guild_only()
-    @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(
         name="NPC name",
         description="What the players can know or notice",
@@ -1132,21 +1178,27 @@ def build_bot() -> commands.Bot:
         disposition: str = "",
         notes: str = "",
     ) -> None:
+        if not await require_gm_access(interaction, gm_role_name):
+            return
         guild_id = require_interaction_guild_id(interaction)
         if guild_id is None:
             await interaction.response.send_message("Use this in a server so I can scope NPCs correctly.", ephemeral=True)
             return
-        if not name.strip():
-            await interaction.response.send_message("NPC name cannot be blank.", ephemeral=True)
+        try:
+            npc = store.create_npc(
+                guild_id,
+                name=validate_text(name, "npc_name", required=True),
+                description=validate_text(description, "npc_description"),
+                disposition=validate_text(disposition, "npc_disposition"),
+                notes=validate_text(notes, "npc_notes"),
+            )
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
             return
-        npc = store.create_npc(
-            guild_id,
-            name=name,
-            description=description,
-            disposition=disposition,
-            notes=notes,
+        await interaction.response.send_message(
+            f"Created NPC #{npc.id}: **{escape_discord_text(npc.name)}**",
+            ephemeral=True,
         )
-        await interaction.response.send_message(f"Created NPC #{npc.id}: **{npc.name}**", ephemeral=True)
 
     @bot.tree.command(name="scvmbirth", description="Generate a ready-to-play random character.")
     @app_commands.describe(class_name="Optional class to force instead of rolling from the catalog")
@@ -1157,7 +1209,7 @@ def build_bot() -> commands.Bot:
             class_template = store.find_class(class_name)
             if class_template is None:
                 await interaction.followup.send(
-                    f"No stored class named `{class_name}`. Try `/classes` first.",
+                    f"No stored class named `{escape_discord_text(class_name)}`. Try `/classes` first.",
                     ephemeral=True,
                 )
                 return
@@ -1202,8 +1254,8 @@ def build_bot() -> commands.Bot:
             return
         payload = BytesIO(character.export_text().encode("utf-8"))
         await interaction.response.send_message(
-            content=f"Export for **{character.name}**",
-            file=discord.File(payload, filename=f"{character.name.replace(' ', '_').lower()}_sheet.txt"),
+            content=f"Export for **{escape_discord_text(character.name)}**",
+            file=discord.File(payload, filename=safe_export_filename(character.id, character.name)),
             ephemeral=True,
         )
 
@@ -1222,7 +1274,8 @@ def build_bot() -> commands.Bot:
             total = die + modifier
             outcome = "Success" if total >= dr else "Failure"
             await interaction.response.send_message(
-                f"**{character.name}** rolls `{ability_name.title()}`: `d20({die}) {modifier:+d} = {total}` vs DR `{dr}` -> **{outcome}**"
+                f"**{escape_discord_text(character.name)}** rolls `{ability_name.title()}`: "
+                f"`d20({die}) {modifier:+d} = {total}` vs DR `{dr}` -> **{outcome}**"
             )
             return
 
@@ -1328,7 +1381,7 @@ def build_bot() -> commands.Bot:
         character.set_ability(normalized, parsed_value)
         store.upsert(character)
         await interaction.response.send_message(
-            f"{normalized.title()} set to `{parsed_value:+d}` for **{character.name}**.",
+            f"{normalized.title()} set to `{parsed_value:+d}` for **{escape_discord_text(character.name)}**.",
             ephemeral=True,
         )
 
@@ -1380,15 +1433,18 @@ def build_bot() -> commands.Bot:
             if normalized in {"hp", "max_hp", "omens", "silver"}:
                 setattr(character, normalized, parse_int(value))
             elif normalized == "class_name":
-                apply_class_selection(store, character, value)
+                apply_class_selection(store, character, validate_text(value, "class_name"))
             else:
-                setattr(character, normalized, value.strip())
+                setattr(character, normalized, validate_text(value, normalized))
             store.upsert(character)
-        except ValueError:
-            await interaction.response.send_message("That field expects a whole number.", ephemeral=True)
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
             return
 
-        await interaction.response.send_message(f"{normalized} updated for **{character.name}**.", ephemeral=True)
+        await interaction.response.send_message(
+            f"{normalized} updated for **{escape_discord_text(character.name)}**.",
+            ephemeral=True,
+        )
 
     @bot.tree.command(name="improve", description="Adjust a saved stat or tracked field by a delta.")
     @app_commands.describe(field_name="Ability, hp, max_hp, omens, or silver", delta="Adjustment like +1 or -2")
@@ -1421,7 +1477,7 @@ def build_bot() -> commands.Bot:
         character.discord_name = interaction.user.display_name
         store.upsert(character)
         await interaction.response.send_message(
-            f"{normalized} adjusted by `{amount:+d}`. New value for **{character.name}**: `{new_value:+d}`",
+            f"{normalized} adjusted by `{amount:+d}`. New value for **{escape_discord_text(character.name)}**: `{new_value:+d}`",
             ephemeral=True,
         )
 
@@ -1432,9 +1488,23 @@ def build_bot() -> commands.Bot:
             await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
             return
         character.discord_name = interaction.user.display_name
-        character.equipment.append(item.strip())
+        if len(character.equipment) >= MAX_EQUIPMENT_ITEMS:
+            await interaction.response.send_message(
+                f"Characters can have at most {MAX_EQUIPMENT_ITEMS} equipment entries.",
+                ephemeral=True,
+            )
+            return
+        try:
+            clean_item = validate_text(item, "equipment", required=True)
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        character.equipment.append(clean_item)
         store.upsert(character)
-        await interaction.response.send_message(f"Added `{item.strip()}` to **{character.name}**.", ephemeral=True)
+        await interaction.response.send_message(
+            f"Added `{escape_discord_text(clean_item)}` to **{escape_discord_text(character.name)}**.",
+            ephemeral=True,
+        )
 
     @bot.tree.command(name="removeitem", description="Remove one item from your equipment list.")
     async def slash_removeitem(interaction: discord.Interaction, item: str) -> None:
@@ -1446,10 +1516,16 @@ def build_bot() -> commands.Bot:
         try:
             character.equipment.remove(target)
         except ValueError:
-            await interaction.response.send_message(f"`{target}` was not found on your equipment list.", ephemeral=True)
+            await interaction.response.send_message(
+                f"`{escape_discord_text(target)}` was not found on your equipment list.",
+                ephemeral=True,
+            )
             return
         store.upsert(character)
-        await interaction.response.send_message(f"Removed `{target}` from **{character.name}**.", ephemeral=True)
+        await interaction.response.send_message(
+            f"Removed `{escape_discord_text(target)}` from **{escape_discord_text(character.name)}**.",
+            ephemeral=True,
+        )
 
     @bot.tree.command(name="addnote", description="Add one note to your character.")
     async def slash_addnote(interaction: discord.Interaction, note: str) -> None:
@@ -1464,7 +1540,10 @@ def build_bot() -> commands.Bot:
             return
         character.discord_name = interaction.user.display_name
         store.upsert(character)
-        await interaction.response.send_message(f"Added note to **{character.name}**.\n{format_notes(character)}", ephemeral=True)
+        await interaction.response.send_message(
+            f"Added note to **{escape_discord_text(character.name)}**.\n{format_notes(character)}",
+            ephemeral=True,
+        )
 
     @bot.tree.command(name="notes", description="List your character notes with note numbers.")
     async def slash_notes(interaction: discord.Interaction) -> None:
@@ -1472,7 +1551,10 @@ def build_bot() -> commands.Bot:
         if character is None:
             await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
             return
-        await interaction.response.send_message(f"Notes for **{character.name}**:\n{format_notes(character)}", ephemeral=True)
+        await interaction.response.send_message(
+            f"Notes for **{escape_discord_text(character.name)}**:\n{format_notes(character)}",
+            ephemeral=True,
+        )
 
     @bot.tree.command(name="editnote", description="Replace one numbered character note.")
     @app_commands.describe(note_number="Number from `/notes`", note="Replacement note text")
@@ -1489,7 +1571,7 @@ def build_bot() -> commands.Bot:
         character.discord_name = interaction.user.display_name
         store.upsert(character)
         await interaction.response.send_message(
-            f"Updated note `{note_number}` for **{character.name}**.\n{format_notes(character)}",
+            f"Updated note `{note_number}` for **{escape_discord_text(character.name)}**.\n{format_notes(character)}",
             ephemeral=True,
         )
 
@@ -1508,7 +1590,8 @@ def build_bot() -> commands.Bot:
         character.discord_name = interaction.user.display_name
         store.upsert(character)
         await interaction.response.send_message(
-            f"Removed note `{note_number}` from **{character.name}**: {removed_note}\n{format_notes(character)}",
+            f"Removed note `{note_number}` from **{escape_discord_text(character.name)}**: "
+            f"{escape_discord_text(removed_note)}\n{format_notes(character)}",
             ephemeral=True,
         )
 
@@ -1572,7 +1655,10 @@ def build_bot() -> commands.Bot:
         character.discord_name = interaction.user.display_name
         store.upsert(character)
         await interaction.response.send_message(
-            f"**{character.name}** has gotten better.\n" + "\n".join(summaries) + "\n\n" + build_character_sheet(character),
+            f"**{escape_discord_text(character.name)}** has gotten better.\n"
+            + "\n".join(summaries)
+            + "\n\n"
+            + build_character_sheet(character),
             ephemeral=True,
         )
 
