@@ -76,6 +76,7 @@ class Character:
     silver: int = 0
     equipment: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    selected_class_feature_ids: list[int] = field(default_factory=list)
     class_template: ClassTemplate | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -177,17 +178,11 @@ class Character:
         return lines
 
     def selected_class_features(self) -> list[ClassFeature]:
-        if not self.class_template:
+        if not self.class_template or not self.selected_class_feature_ids:
             return []
 
-        selected: list[ClassFeature] = []
-        for note in self.notes:
-            for feature in self.class_template.features:
-                if feature in selected:
-                    continue
-                if note_selects_feature(note, feature):
-                    selected.append(feature)
-        return selected
+        selected_ids = set(self.selected_class_feature_ids)
+        return [feature for feature in self.class_template.features if feature.id in selected_ids]
 
 
 def normalize_ability_name(raw: str) -> str:
@@ -198,18 +193,14 @@ def normalize_ability_name(raw: str) -> str:
     return normalized
 
 
-def note_selects_feature(note: str, feature: ClassFeature) -> bool:
-    normalized_note = normalize_feature_selector(note)
+def selector_matches_feature(selector: str, feature: ClassFeature) -> bool:
+    normalized_selector = normalize_feature_selector(selector)
     normalized_name = normalize_feature_selector(feature.name)
     normalized_roll = normalize_feature_selector(feature.roll_label)
 
-    if normalized_note == normalized_name:
+    if normalized_selector == normalized_name:
         return True
-    if normalized_roll and normalized_note == normalized_roll:
-        return True
-    if normalized_note.startswith(f"{normalized_name}:"):
-        return True
-    if normalized_name and normalized_name in normalized_note:
+    if normalized_roll and normalized_selector == normalized_roll:
         return True
 
     label_prefixes = (
@@ -221,8 +212,8 @@ def note_selects_feature(note: str, feature: ClassFeature) -> bool:
     )
     for label in label_prefixes:
         normalized_label = normalize_feature_selector(label)
-        if normalized_note.startswith(f"{normalized_label}:"):
-            value = normalize_feature_selector(normalized_note.split(":", 1)[1]).strip("[]")
+        if normalized_selector.startswith(f"{normalized_label}:"):
+            value = normalize_feature_selector(normalized_selector.split(":", 1)[1]).strip("[]")
             return value == normalized_name or bool(normalized_roll and value == normalized_roll)
 
     return False

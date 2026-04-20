@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-from morkbotted.creation import CharacterCreationError, append_class_feature_note, create_character_from_values
+from morkbotted.creation import CharacterCreationError, create_character_from_values
 from morkbotted.storage import CharacterStore
 
 
@@ -59,14 +59,15 @@ class ManualCharacterCreationTest(unittest.TestCase):
         self.assertEqual(reloaded.class_name, "Cursed Skinwalker")
         self.assertIsNotNone(reloaded.class_template)
         self.assertIn("rusty knife", reloaded.equipment)
-        self.assertIn("beast form: Flayed and Dripping Wolf", reloaded.notes)
+        self.assertEqual(reloaded.notes, [])
+        self.assertEqual(len(reloaded.selected_class_feature_ids), 1)
         self.assertIn("Class Feature: [2] Flayed and Dripping Wolf", sheet)
         self.assertIn("- [2] Flayed and Dripping Wolf", export)
         self.assertNotIn("Class Feature: None recorded.", sheet)
         self.assertNotIn("Murder-Plagued Rat", sheet)
         self.assertNotIn("Murder-Plagued Rat", export)
 
-    def test_manual_skinwalker_still_accepts_roll_number_for_legacy_entries(self) -> None:
+    def test_manual_skinwalker_accepts_roll_number_for_class_feature_field(self) -> None:
         store = CharacterStore(self.db_path)
 
         created = create_character_from_values(
@@ -124,11 +125,6 @@ class ManualCharacterCreationTest(unittest.TestCase):
         self.assertIn("Class Feature: None recorded.", sheet)
         self.assertIn("- None recorded for this character.", export)
         self.assertNotIn("Flayed and Dripping Wolf", sheet)
-
-    def test_class_feature_note_helper_preserves_existing_notes(self) -> None:
-        notes = append_class_feature_note(["Generated manually."], "beast form: 2")
-
-        self.assertEqual(notes, ["Generated manually.", "beast form: 2"])
 
     def test_invalid_manual_stat_names_the_bad_field(self) -> None:
         store = CharacterStore(self.db_path)

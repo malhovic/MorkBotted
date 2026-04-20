@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from morkbotted.character import Character
+from morkbotted.character import Character, ClassFeature, ClassTemplate, selector_matches_feature
 from morkbotted.storage import CharacterStore
 
 
@@ -38,17 +38,16 @@ def parse_csv_field(value: str | None) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def append_class_feature_note(notes: list[str], class_feature: str | None) -> list[str]:
+def resolve_class_feature(class_template: ClassTemplate, class_feature: str | None) -> ClassFeature | None:
     if not class_feature:
-        return notes
+        return None
     value = class_feature.strip()
     if not value or value.lower() == "skip":
-        return notes
-    if ":" in value:
-        notes.append(value)
-    else:
-        notes.append(f"class feature: {value}")
-    return notes
+        return None
+    for feature in class_template.features:
+        if selector_matches_feature(value, feature):
+            return feature
+    return None
 
 
 def class_feature_hint(character: Character) -> str:
@@ -64,6 +63,7 @@ def class_feature_hint(character: Character) -> str:
 
 def apply_class_selection(store: CharacterStore, character: Character, raw_class_name: str) -> Character:
     resolved_class = store.find_class(raw_class_name)
+    previous_class_id = character.class_id
     if resolved_class:
         character.class_id = resolved_class.id
         character.class_name = resolved_class.name
@@ -72,6 +72,8 @@ def apply_class_selection(store: CharacterStore, character: Character, raw_class
         character.class_id = None
         character.class_name = raw_class_name.strip() or "Classless"
         character.class_template = None
+    if character.class_id != previous_class_id:
+        character.selected_class_feature_ids = []
     return character
 
 
@@ -96,8 +98,6 @@ def create_character_from_values(
     notes: str | None,
     class_feature: str | None = None,
 ) -> Character:
-    parsed_notes = parse_csv_field(notes)
-    append_class_feature_note(parsed_notes, class_feature)
     character = Character(
         user_id=user_id,
         discord_name=discord_name,
@@ -113,7 +113,7 @@ def create_character_from_values(
         omens=parse_int_field("omens", omens),
         silver=parse_int_field("silver", silver),
         equipment=parse_csv_field(equipment),
-        notes=parsed_notes,
+        notes=parse_csv_field(notes),
     )
     apply_class_selection(store, character, class_name)
     if class_feature and not character.class_template:
@@ -122,6 +122,11 @@ def create_character_from_values(
             class_name,
             "Choose one of the autocompleted stored classes before selecting `class_feature`, or leave `class_feature` blank for a custom class.",
         )
-    if class_feature and character.class_template and character.class_template.features and not character.selected_class_features():
+    if class_feature and character.class_template and not character.class_template.features:
         raise CharacterCreationError("class_feature", class_feature, class_feature_hint(character))
+    if class_feature and character.class_template and character.class_template.features:
+        selected_feature = resolve_class_feature(character.class_template, class_feature)
+        if selected_feature is None or selected_feature.id is None:
+            raise CharacterCreationError("class_feature", class_feature, class_feature_hint(character))
+        character.selected_class_feature_ids.append(selected_feature.id)
     return store.upsert(character)

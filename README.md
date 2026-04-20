@@ -77,7 +77,9 @@ If `COMMAND_SYNC_GUILD_ID` is set, the bot also syncs slash commands directly in
 - `/improve`
 - `/additem`
 - `/removeitem`
+- `/notes`
 - `/addnote`
+- `/editnote`
 - `/removenote`
 - `/roll`
 
@@ -121,8 +123,10 @@ Optional fields can be left blank. Equipment and notes can be entered as comma-s
 Ability fields use MORK BORG modifiers such as `-1`, `0`, or `+2`, not raw 3d6 ability scores.
 
 If the class name matches one of the stored templates, the bot links the character to that class and includes class-source details in sheet exports.
-If the character's class has a feature table, pick the chosen feature from `class_feature` autocomplete or add it in notes. Category-specific entries like `beast form: Flayed and Dripping Wolf` are preferred because they identify the exact table.
+If the character's class has a feature table, pick the chosen feature from `class_feature` autocomplete. Category-specific entries like `beast form: Flayed and Dripping Wolf` are preferred because they identify the exact table.
 Slash `/create` autocompletes class feature options after you choose a stored class.
+
+Notes are freeform reminders only. Use `/notes` to list them, `/addnote` to append one, `/editnote` to replace a numbered note, and `/removenote` to remove a numbered note.
 
 ## Random character generation
 
@@ -135,7 +139,7 @@ Generated characters include:
 - Rolled ability modifiers using the MORK BORG ability table
 - HP, Omens, and silver based on the chosen class
 - Rolled weapon and armor
-- Starter equipment and class-feature notes
+- Starter equipment and selected class features
 
 When used inside a server, the generated character becomes your active character there automatically.
 

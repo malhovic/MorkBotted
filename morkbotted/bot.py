@@ -84,6 +84,38 @@ def build_class_summary(class_template: ClassTemplate) -> str:
     return "\n".join(lines)
 
 
+def format_notes(character: Character) -> str:
+    if not character.notes:
+        return "No notes recorded."
+    return "\n".join(f"{index}. {note}" for index, note in enumerate(character.notes, start=1))
+
+
+def add_character_note(character: Character, note: str) -> None:
+    clean_note = note.strip()
+    if not clean_note:
+        raise ValueError("Note text cannot be blank.")
+    character.notes.append(clean_note)
+
+
+def update_character_note(character: Character, note_number: int, note: str) -> None:
+    clean_note = note.strip()
+    if not clean_note:
+        raise ValueError("Note text cannot be blank.")
+    if not character.notes:
+        raise ValueError("No notes recorded.")
+    if note_number < 1 or note_number > len(character.notes):
+        raise ValueError(f"Note number must be between 1 and {len(character.notes)}.")
+    character.notes[note_number - 1] = clean_note
+
+
+def remove_character_note(character: Character, note_number: int) -> str:
+    if not character.notes:
+        raise ValueError("No notes recorded.")
+    if note_number < 1 or note_number > len(character.notes):
+        raise ValueError(f"Note number must be between 1 and {len(character.notes)}.")
+    return character.notes.pop(note_number - 1)
+
+
 async def send_interaction_text(
     interaction: discord.Interaction,
     content: str,
@@ -473,8 +505,10 @@ def build_bot() -> commands.Bot:
             f"`{prefix}omens`, `{prefix}omens roll`, or `{prefix}omens set 2` for daily Omens",
             f"`{prefix}additem <item>` add a weapon, armor, scroll, or other equipment",
             f"`{prefix}removeitem <item>` remove one equipment entry by exact text",
+            f"`{prefix}notes` list your numbered notes",
             f"`{prefix}addnote <text>` add a note for scars, powers, debts, or session reminders",
-            f"`{prefix}removenote <text>` remove one note by exact text",
+            f"`{prefix}editnote <number> <text>` replace a numbered note",
+            f"`{prefix}removenote <number>` remove a numbered note",
             f"`{prefix}roll d6`, `{prefix}roll 2d8+1` for raw dice",
             f"`{prefix}roll presence` or `{prefix}roll strength 14` for MORK BORG ability tests",
         ]
@@ -761,21 +795,40 @@ def build_bot() -> commands.Bot:
     @bot.command(name="addnote")
     async def addnote(ctx: commands.Context, *, note: str) -> None:
         character = require_character_for_ctx(ctx)
+        try:
+            add_character_note(character, note)
+        except ValueError as error:
+            raise commands.BadArgument(str(error)) from error
         character.discord_name = ctx.author.display_name
-        character.notes.append(note.strip())
         store.upsert(character)
-        await ctx.send(f"Added note to **{character.name}**.")
+        await ctx.send(f"Added note to **{character.name}**.\n{format_notes(character)}")
+
+    @bot.command(name="notes")
+    async def notes(ctx: commands.Context) -> None:
+        character = require_character_for_ctx(ctx)
+        await ctx.send(f"Notes for **{character.name}**:\n{format_notes(character)}")
+
+    @bot.command(name="editnote")
+    async def editnote(ctx: commands.Context, note_number: int, *, note: str) -> None:
+        character = require_character_for_ctx(ctx)
+        try:
+            update_character_note(character, note_number, note)
+        except ValueError as error:
+            raise commands.BadArgument(str(error)) from error
+        character.discord_name = ctx.author.display_name
+        store.upsert(character)
+        await ctx.send(f"Updated note `{note_number}` for **{character.name}**.\n{format_notes(character)}")
 
     @bot.command(name="removenote")
-    async def removenote(ctx: commands.Context, *, note: str) -> None:
+    async def removenote(ctx: commands.Context, note_number: int) -> None:
         character = require_character_for_ctx(ctx)
-        target = note.strip()
         try:
-            character.notes.remove(target)
+            removed_note = remove_character_note(character, note_number)
         except ValueError as error:
-            raise commands.BadArgument(f"Note `{target}` was not found.") from error
+            raise commands.BadArgument(str(error)) from error
+        character.discord_name = ctx.author.display_name
         store.upsert(character)
-        await ctx.send(f"Removed note from **{character.name}**.")
+        await ctx.send(f"Removed note `{note_number}` from **{character.name}**: {removed_note}\n{format_notes(character)}")
 
     @bot.command(name="roll")
     async def roll(ctx: commands.Context, target: str, dr: int = DEFAULT_DR) -> None:
@@ -1213,25 +1266,60 @@ def build_bot() -> commands.Bot:
         if character is None:
             await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
             return
+        try:
+            add_character_note(character, note)
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
         character.discord_name = interaction.user.display_name
-        character.notes.append(note.strip())
         store.upsert(character)
-        await interaction.response.send_message(f"Added note to **{character.name}**.", ephemeral=True)
+        await interaction.response.send_message(f"Added note to **{character.name}**.\n{format_notes(character)}", ephemeral=True)
 
-    @bot.tree.command(name="removenote", description="Remove one note from your character.")
-    async def slash_removenote(interaction: discord.Interaction, note: str) -> None:
+    @bot.tree.command(name="notes", description="List your character notes with note numbers.")
+    async def slash_notes(interaction: discord.Interaction) -> None:
         character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
             await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
             return
-        target = note.strip()
-        try:
-            character.notes.remove(target)
-        except ValueError:
-            await interaction.response.send_message(f"Note `{target}` was not found.", ephemeral=True)
+        await interaction.response.send_message(f"Notes for **{character.name}**:\n{format_notes(character)}", ephemeral=True)
+
+    @bot.tree.command(name="editnote", description="Replace one numbered character note.")
+    @app_commands.describe(note_number="Number from `/notes`", note="Replacement note text")
+    async def slash_editnote(interaction: discord.Interaction, note_number: int, note: str) -> None:
+        character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
+        if character is None:
+            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
             return
+        try:
+            update_character_note(character, note_number, note)
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        character.discord_name = interaction.user.display_name
         store.upsert(character)
-        await interaction.response.send_message(f"Removed note from **{character.name}**.", ephemeral=True)
+        await interaction.response.send_message(
+            f"Updated note `{note_number}` for **{character.name}**.\n{format_notes(character)}",
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="removenote", description="Remove one numbered character note.")
+    @app_commands.describe(note_number="Number from `/notes`")
+    async def slash_removenote(interaction: discord.Interaction, note_number: int) -> None:
+        character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
+        if character is None:
+            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
+            return
+        try:
+            removed_note = remove_character_note(character, note_number)
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        character.discord_name = interaction.user.display_name
+        store.upsert(character)
+        await interaction.response.send_message(
+            f"Removed note `{note_number}` from **{character.name}**: {removed_note}\n{format_notes(character)}",
+            ephemeral=True,
+        )
 
     @bot.tree.command(name="gettingbetter", description="Apply post-session stat changes.")
     @app_commands.describe(

@@ -110,6 +110,15 @@ class CharacterStore:
                     FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS character_class_features (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    character_id INTEGER NOT NULL,
+                    class_feature_id INTEGER NOT NULL,
+                    position INTEGER NOT NULL,
+                    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+                    FOREIGN KEY (class_feature_id) REFERENCES class_features(id) ON DELETE CASCADE
+                );
+
                 CREATE TABLE IF NOT EXISTS active_characters (
                     guild_id INTEGER NOT NULL,
                     user_id INTEGER NOT NULL,
@@ -172,7 +181,7 @@ class CharacterStore:
             )
 
     def _repair_character_foreign_keys(self) -> None:
-        dependent_tables = ("character_equipment", "character_notes", "active_characters")
+        dependent_tables = ("character_equipment", "character_notes", "character_class_features", "active_characters")
 
         with self._connect() as connection:
             repair_needed = any(
@@ -211,6 +220,20 @@ class CharacterStore:
                     SELECT id, character_id, note_text, position
                     FROM character_notes_old;
                     DROP TABLE character_notes_old;
+
+                    ALTER TABLE character_class_features RENAME TO character_class_features_old;
+                    CREATE TABLE character_class_features (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        character_id INTEGER NOT NULL,
+                        class_feature_id INTEGER NOT NULL,
+                        position INTEGER NOT NULL,
+                        FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+                        FOREIGN KEY (class_feature_id) REFERENCES class_features(id) ON DELETE CASCADE
+                    );
+                    INSERT INTO character_class_features (id, character_id, class_feature_id, position)
+                    SELECT id, character_id, class_feature_id, position
+                    FROM character_class_features_old;
+                    DROP TABLE character_class_features_old;
 
                     ALTER TABLE active_characters RENAME TO active_characters_old;
                     CREATE TABLE active_characters (
@@ -285,23 +308,51 @@ class CharacterStore:
                             class_id,
                         ),
                     )
-                    connection.execute("DELETE FROM class_features WHERE class_id = ?", (class_id,))
+                features = class_payload.get("features", [])
+                existing_features = connection.execute(
+                    "SELECT id, position FROM class_features WHERE class_id = ? ORDER BY position",
+                    (class_id,),
+                ).fetchall()
+                existing_feature_ids_by_position = {row["position"]: row["id"] for row in existing_features}
 
-                for position, feature in enumerate(class_payload.get("features", []), start=1):
-                    connection.execute(
-                        """
-                        INSERT INTO class_features (class_id, category, roll_label, name, description, position)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            class_id,
-                            feature["category"],
-                            feature.get("roll_label"),
-                            feature["name"],
-                            feature["description"],
-                            position,
-                        ),
-                    )
+                for position, feature in enumerate(features, start=1):
+                    existing_feature_id = existing_feature_ids_by_position.get(position)
+                    if existing_feature_id is None:
+                        connection.execute(
+                            """
+                            INSERT INTO class_features (class_id, category, roll_label, name, description, position)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                class_id,
+                                feature["category"],
+                                feature.get("roll_label"),
+                                feature["name"],
+                                feature["description"],
+                                position,
+                            ),
+                        )
+                    else:
+                        connection.execute(
+                            """
+                            UPDATE class_features
+                            SET category = ?, roll_label = ?, name = ?, description = ?, position = ?
+                            WHERE id = ?
+                            """,
+                            (
+                                feature["category"],
+                                feature.get("roll_label"),
+                                feature["name"],
+                                feature["description"],
+                                position,
+                                existing_feature_id,
+                            ),
+                        )
+
+                connection.execute(
+                    "DELETE FROM class_features WHERE class_id = ? AND position > ?",
+                    (class_id, len(features)),
+                )
 
     def _maybe_migrate_json(self) -> None:
         json_path = self.db_path.parent / "characters.json"
@@ -390,6 +441,7 @@ class CharacterStore:
         row: sqlite3.Row,
         equipment_rows: list[sqlite3.Row],
         note_rows: list[sqlite3.Row],
+        selected_feature_rows: list[sqlite3.Row],
     ) -> Character:
         class_template = None
         if row["class_id"] is not None:
@@ -415,6 +467,7 @@ class CharacterStore:
             silver=row["silver"],
             equipment=[item_row["item_text"] for item_row in equipment_rows],
             notes=[note_row["note_text"] for note_row in note_rows],
+            selected_class_feature_ids=[feature_row["class_feature_id"] for feature_row in selected_feature_rows],
             class_template=class_template,
         )
 
@@ -430,7 +483,11 @@ class CharacterStore:
                 "SELECT * FROM character_notes WHERE character_id = ? ORDER BY position, id",
                 (row["id"],),
             ).fetchall()
-        return self._build_character(row, equipment_rows, note_rows)
+            selected_feature_rows = connection.execute(
+                "SELECT * FROM character_class_features WHERE character_id = ? ORDER BY position, id",
+                (row["id"],),
+            ).fetchall()
+        return self._build_character(row, equipment_rows, note_rows, selected_feature_rows)
 
     def get_class_by_id(self, class_id: int) -> ClassTemplate | None:
         with self._connect() as connection:
@@ -574,6 +631,7 @@ class CharacterStore:
                 )
                 connection.execute("DELETE FROM character_equipment WHERE character_id = ?", (character_id,))
                 connection.execute("DELETE FROM character_notes WHERE character_id = ?", (character_id,))
+                connection.execute("DELETE FROM character_class_features WHERE character_id = ?", (character_id,))
 
             for position, item in enumerate(character.equipment, start=1):
                 connection.execute(
@@ -584,6 +642,14 @@ class CharacterStore:
                 connection.execute(
                     "INSERT INTO character_notes (character_id, note_text, position) VALUES (?, ?, ?)",
                     (character_id, note, position),
+                )
+            for position, feature_id in enumerate(character.selected_class_feature_ids, start=1):
+                connection.execute(
+                    """
+                    INSERT INTO character_class_features (character_id, class_feature_id, position)
+                    VALUES (?, ?, ?)
+                    """,
+                    (character_id, feature_id, position),
                 )
 
         return self.get_character_by_id(character_id) or character

@@ -53,7 +53,7 @@ class OmenRulesTest(unittest.TestCase):
             discord_name="Player",
             name="Star-Ruined",
             class_name="Pale One",
-            notes=["blessing: The Stars Were Right"],
+            selected_class_feature_ids=[1],
             class_template=ClassTemplate(
                 slug="pale-one",
                 name="Pale One",
@@ -62,6 +62,7 @@ class OmenRulesTest(unittest.TestCase):
                 omen_die="d4",
                 features=[
                     ClassFeature(
+                        id=1,
                         category="blessing",
                         roll_label="1",
                         name="The Stars Were Right",
