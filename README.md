@@ -162,6 +162,5 @@ The older `!` commands are still present for compatibility, but slash commands a
 
 ## Suggested next upgrades
 
-- Add random character generation
-- Expand the stored character model further with dedicated tables for powers, scrolls, active class rolls, and session history
+- Expand the stored character model further with dedicated tables for powers, scrolls, active effects, and session history
 - Add GM-only commands for shared party loot, calendars, and misery tracking
