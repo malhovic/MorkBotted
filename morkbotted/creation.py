@@ -4,8 +4,30 @@ from morkbotted.character import Character
 from morkbotted.storage import CharacterStore
 
 
+class CharacterCreationError(ValueError):
+    def __init__(self, field_name: str, raw_value: str, hint: str) -> None:
+        self.field_name = field_name
+        self.raw_value = raw_value
+        self.hint = hint
+        super().__init__(f"`{field_name}` value `{raw_value}` is invalid. {hint}")
+
+
 def parse_int(raw: str) -> int:
     return int(raw.replace("+", ""))
+
+
+def parse_int_field(field_name: str, raw: str) -> int:
+    value = raw.strip()
+    if not value:
+        raise CharacterCreationError(field_name, raw, "Enter a whole number, such as `-1`, `0`, `2`, or `90`.")
+    try:
+        return parse_int(value)
+    except ValueError as error:
+        raise CharacterCreationError(
+            field_name,
+            raw,
+            "Enter only a whole number. Ability modifiers look like `-1`, `0`, or `+2`; HP, Omens, and silver use plain totals.",
+        ) from error
 
 
 def parse_csv_field(value: str | None) -> list[str]:
@@ -27,6 +49,17 @@ def append_class_feature_note(notes: list[str], class_feature: str | None) -> li
     else:
         notes.append(f"class feature: {value}")
     return notes
+
+
+def class_feature_hint(character: Character) -> str:
+    if not character.class_template or not character.class_template.features:
+        return "This class does not have stored feature choices."
+
+    examples = []
+    for feature in character.class_template.features[:6]:
+        category = feature.category.replace("_", " ")
+        examples.append(f"`{category}: {feature.name}`")
+    return "Use one of: " + "; ".join(examples) + "."
 
 
 def apply_class_selection(store: CharacterStore, character: Character, raw_class_name: str) -> Character:
@@ -71,16 +104,24 @@ def create_character_from_values(
         name=name.strip(),
         background=background.strip(),
         description=description.strip(),
-        agility=parse_int(agility),
-        presence=parse_int(presence),
-        strength=parse_int(strength),
-        toughness=parse_int(toughness),
-        hp=parse_int(hp),
-        max_hp=parse_int(max_hp),
-        omens=parse_int(omens),
-        silver=parse_int(silver),
+        agility=parse_int_field("agility", agility),
+        presence=parse_int_field("presence", presence),
+        strength=parse_int_field("strength", strength),
+        toughness=parse_int_field("toughness", toughness),
+        hp=parse_int_field("hp", hp),
+        max_hp=parse_int_field("max_hp", max_hp),
+        omens=parse_int_field("omens", omens),
+        silver=parse_int_field("silver", silver),
         equipment=parse_csv_field(equipment),
         notes=parsed_notes,
     )
     apply_class_selection(store, character, class_name)
+    if class_feature and not character.class_template:
+        raise CharacterCreationError(
+            "class_name",
+            class_name,
+            "Choose one of the autocompleted stored classes before selecting `class_feature`, or leave `class_feature` blank for a custom class.",
+        )
+    if class_feature and character.class_template and character.class_template.features and not character.selected_class_features():
+        raise CharacterCreationError("class_feature", class_feature, class_feature_hint(character))
     return store.upsert(character)

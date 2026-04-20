@@ -14,10 +14,9 @@ from dotenv import load_dotenv
 
 from morkbotted.character import ABILITY_NAMES, EDITABLE_FIELDS, Character, ClassTemplate, normalize_ability_name
 from morkbotted.creation import (
-    append_class_feature_note,
+    CharacterCreationError,
     apply_class_selection,
     create_character_from_values,
-    parse_csv_field,
     parse_int,
 )
 from morkbotted.generator import generate_random_character
@@ -30,6 +29,9 @@ DISCORD_MESSAGE_LIMIT = 2000
 ABILITY_ALIAS_SET = {"agi", "pre", "str", "tgh", "tough"}
 CREATE_FORM_TEMPLATE = """Reply with this template and replace the values after each colon.
 You can leave optional fields blank.
+Use ability modifiers for stats, not raw 3d6 scores. Examples: -1, 0, +2.
+Use class_feature for class options. Example for Cursed Skinwalker: beast form: Flayed and Dripping Wolf.
+Separate equipment and notes with commas.
 
 name:
 class:
@@ -288,6 +290,113 @@ def build_bot() -> commands.Bot:
         ]
         return matches[:25]
 
+    async def modifier_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        del interaction
+        options = ["-3", "-2", "-1", "0", "+1", "+2", "+3", "+4", "+5", "+6"]
+        return [
+            app_commands.Choice(name=value, value=value)
+            for value in options
+            if not current or current in value
+        ][:25]
+
+    async def ability_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        del interaction
+        current_lower = current.lower().strip()
+        return [
+            app_commands.Choice(name=ability.title(), value=ability)
+            for ability in ABILITY_NAMES
+            if not current_lower or current_lower in ability
+        ][:25]
+
+    async def editable_field_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        del interaction
+        current_lower = current.lower().strip()
+        return [
+            app_commands.Choice(name=field_name, value=field_name)
+            for field_name in sorted(EDITABLE_FIELDS)
+            if not current_lower or current_lower in field_name
+        ][:25]
+
+    async def improvable_field_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        del interaction
+        current_lower = current.lower().strip()
+        fields = list(ABILITY_NAMES) + ["hp", "max_hp", "omens", "silver"]
+        return [
+            app_commands.Choice(name=field_name, value=field_name)
+            for field_name in fields
+            if not current_lower or current_lower in field_name
+        ][:25]
+
+    async def hp_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        del interaction
+        options = [str(value) for value in range(1, 21)]
+        return [
+            app_commands.Choice(name=value, value=value)
+            for value in options
+            if not current or value.startswith(current)
+        ][:25]
+
+    async def omens_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        del interaction
+        options = [str(value) for value in range(0, 7)]
+        return [
+            app_commands.Choice(name=value, value=value)
+            for value in options
+            if not current or value.startswith(current)
+        ][:25]
+
+    async def silver_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        del interaction
+        options = ["0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100", "120", "150", "180", "200"]
+        return [
+            app_commands.Choice(name=value, value=value)
+            for value in options
+            if not current or value.startswith(current)
+        ][:25]
+
+    async def class_feature_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        class_name = str(getattr(interaction.namespace, "class_name", "") or "")
+        class_template = store.find_class(class_name)
+        if class_template is None or not class_template.features:
+            return []
+
+        current_lower = current.lower().strip()
+        choices: list[app_commands.Choice[str]] = []
+        for feature in class_template.features:
+            category = feature.category.replace("_", " ")
+            roll_text = f"[{feature.roll_label}] " if feature.roll_label else ""
+            name = f"{roll_text}{feature.name} ({category})"
+            value = f"{category}: {feature.name}"
+            searchable = f"{name} {value} {feature.description}".lower()
+            if current_lower and current_lower not in searchable:
+                continue
+            choices.append(app_commands.Choice(name=name[:100], value=value[:100]))
+        return choices[:25]
+
     async def character_name_autocomplete(
         interaction: discord.Interaction,
         current: str,
@@ -398,39 +507,29 @@ def build_bot() -> commands.Bot:
             return
 
         try:
-            agility = parse_int(form_data["agility"])
-            presence = parse_int(form_data["presence"])
-            strength = parse_int(form_data["strength"])
-            toughness = parse_int(form_data["toughness"])
-            hp = parse_int(form_data["hp"])
-            max_hp = parse_int(form_data["max_hp"])
-            omens = parse_int(form_data["omens"])
-            silver = parse_int(form_data["silver"])
-        except ValueError:
-            await dm_channel.send(
-                "One of the numeric fields was invalid. Please use whole numbers like `-1`, `0`, or `2`, then run `!create` again."
+            character = create_character_from_values(
+                store,
+                user_id=ctx.author.id,
+                discord_name=ctx.author.display_name,
+                name=form_data["name"],
+                class_name=form_data["class"],
+                background=form_data.get("background", ""),
+                description=form_data.get("description", ""),
+                agility=form_data["agility"],
+                presence=form_data["presence"],
+                strength=form_data["strength"],
+                toughness=form_data["toughness"],
+                hp=form_data["hp"],
+                max_hp=form_data["max_hp"],
+                omens=form_data["omens"],
+                silver=form_data["silver"],
+                equipment=form_data.get("equipment"),
+                notes=form_data.get("notes"),
+                class_feature=form_data.get("class_feature"),
             )
+        except CharacterCreationError as error:
+            await dm_channel.send(f"I couldn't save that character. {error}")
             return
-
-        character = Character(
-            user_id=ctx.author.id,
-            discord_name=ctx.author.display_name,
-            name=form_data["name"].strip(),
-            background=form_data.get("background", "").strip(),
-            description=form_data.get("description", "").strip(),
-            agility=agility,
-            presence=presence,
-            strength=strength,
-            toughness=toughness,
-            hp=hp,
-            max_hp=max_hp,
-            omens=omens,
-            silver=silver,
-            equipment=parse_csv_field(form_data.get("equipment")),
-            notes=append_class_feature_note(parse_csv_field(form_data.get("notes")), form_data.get("class_feature")),
-        )
-        apply_class_selection(store, character, form_data["class"])
-        character = store.upsert(character)
         if ctx.guild is not None and character.id is not None:
             store.set_active_character(ctx.guild.id, ctx.author.id, character.id)
         await dm_channel.send("Character created and saved.")
@@ -868,10 +967,21 @@ def build_bot() -> commands.Bot:
         background="Short background",
         description="Short character description",
         equipment="Comma-separated equipment",
-        class_feature="Optional class feature or roll, like beast form: 2",
+        class_feature="Optional class feature, like beast form: Flayed and Dripping Wolf",
         notes="Comma-separated notes",
     )
-    @app_commands.autocomplete(class_name=class_name_autocomplete)
+    @app_commands.autocomplete(
+        class_name=class_name_autocomplete,
+        agility=modifier_autocomplete,
+        presence=modifier_autocomplete,
+        strength=modifier_autocomplete,
+        toughness=modifier_autocomplete,
+        hp=hp_autocomplete,
+        max_hp=hp_autocomplete,
+        omens=omens_autocomplete,
+        silver=silver_autocomplete,
+        class_feature=class_feature_autocomplete,
+    )
     async def slash_create(
         interaction: discord.Interaction,
         name: str,
@@ -911,11 +1021,8 @@ def build_bot() -> commands.Bot:
                 notes=notes,
                 class_feature=class_feature,
             )
-        except ValueError:
-            await interaction.response.send_message(
-                "One of the numeric fields was invalid. Use whole numbers like `-1`, `0`, or `2`.",
-                ephemeral=True,
-            )
+        except CharacterCreationError as error:
+            await interaction.response.send_message(f"I couldn't save that character. {error}", ephemeral=True)
             return
         if interaction.guild_id is not None and character.id is not None:
             store.set_active_character(interaction.guild_id, interaction.user.id, character.id)
@@ -923,6 +1030,7 @@ def build_bot() -> commands.Bot:
 
     @bot.tree.command(name="setstat", description="Set one of your ability modifiers.")
     @app_commands.describe(ability="Ability name", value="Modifier like -1, 0, or +2")
+    @app_commands.autocomplete(ability=ability_autocomplete, value=modifier_autocomplete)
     async def slash_setstat(interaction: discord.Interaction, ability: str, value: str) -> None:
         character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
@@ -944,6 +1052,7 @@ def build_bot() -> commands.Bot:
 
     @bot.tree.command(name="setfield", description="Update one saved character field.")
     @app_commands.describe(field_name="Field such as hp, background, or class_name", value="New value")
+    @app_commands.autocomplete(field_name=editable_field_autocomplete)
     async def slash_setfield(interaction: discord.Interaction, field_name: str, value: str) -> None:
         character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
@@ -975,6 +1084,7 @@ def build_bot() -> commands.Bot:
 
     @bot.tree.command(name="improve", description="Adjust a saved stat or tracked field by a delta.")
     @app_commands.describe(field_name="Ability, hp, max_hp, omens, or silver", delta="Adjustment like +1 or -2")
+    @app_commands.autocomplete(field_name=improvable_field_autocomplete)
     async def slash_improve(interaction: discord.Interaction, field_name: str, delta: str) -> None:
         character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:

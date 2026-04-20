@@ -107,13 +107,15 @@ This version updates the four core abilities:
 - Omens
 - Silver
 - Equipment
-- Optional class feature selection, such as `beast form: 2`
+- Optional class feature selection, such as `beast form: Flayed and Dripping Wolf`
 - Notes
 
 Optional fields can be left blank. Equipment and notes can be entered as comma-separated lists.
+Ability fields use MORK BORG modifiers such as `-1`, `0`, or `+2`, not raw 3d6 ability scores.
 
 If the class name matches one of the stored templates, the bot links the character to that class and includes class-source details in sheet exports.
-If the character's class has a feature table, add the chosen feature in `class_feature` or notes. Category-specific entries like `beast form: 2` are preferred because they identify the exact table.
+If the character's class has a feature table, pick the chosen feature from `class_feature` autocomplete or add it in notes. Category-specific entries like `beast form: Flayed and Dripping Wolf` are preferred because they identify the exact table.
+Slash `/create` autocompletes class feature options after you choose a stored class.
 
 ## Random character generation
 
