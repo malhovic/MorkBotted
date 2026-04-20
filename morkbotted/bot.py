@@ -33,32 +33,8 @@ from morkbotted.storage import CharacterStore, NonPlayerCharacter, PartyLoot
 
 DICE_PATTERN = re.compile(r"^(?P<count>\d*)d(?P<sides>\d+)(?P<modifier>[+-]\d+)?$", re.IGNORECASE)
 DEFAULT_DR = 12
-INTERACTIVE_TIMEOUT_SECONDS = 900
 DISCORD_MESSAGE_LIMIT = 2000
 ABILITY_ALIAS_SET = {"agi", "pre", "str", "tgh", "tough"}
-TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
-CREATE_FORM_TEMPLATE = """Reply with this template and replace the values after each colon.
-You can leave optional fields blank.
-Use ability modifiers for stats, not raw 3d6 scores. Examples: -1, 0, +2.
-Use class_feature for class options. Example for Cursed Skinwalker: beast form: Flayed and Dripping Wolf.
-Separate equipment and notes with commas.
-
-name:
-class:
-background:
-description:
-agility:
-presence:
-strength:
-toughness:
-hp:
-max_hp:
-omens:
-silver:
-equipment:
-class_feature:
-notes:
-"""
 
 logger = logging.getLogger(__name__)
 
@@ -150,70 +126,6 @@ def clamp_ability(value: int) -> int:
     return max(-3, min(6, value))
 
 
-async def ensure_dm_channel(user: discord.abc.User | discord.Member) -> discord.DMChannel:
-    dm_channel = user.dm_channel
-    if dm_channel is None:
-        dm_channel = await user.create_dm()
-    return dm_channel
-
-
-def parse_form_reply(reply_text: str) -> dict[str, str]:
-    data: dict[str, str] = {}
-    for line in reply_text.splitlines():
-        if ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        normalized_key = key.strip().lower().replace(" ", "_")
-        if normalized_key:
-            data[normalized_key] = value.strip()
-    return data
-
-
-async def prompt_for_response(
-    bot: commands.Bot,
-    user: discord.abc.User | discord.Member,
-    channel: discord.abc.Messageable,
-    prompt: str,
-    *,
-    optional: bool = False,
-    timeout: int = INTERACTIVE_TIMEOUT_SECONDS,
-) -> str | None:
-    optional_hint = " Reply with `skip` to leave it blank." if optional else ""
-    await channel.send(f"{prompt}{optional_hint}")
-
-    def check(message: discord.Message) -> bool:
-        return message.author.id == user.id and message.channel.id == channel.id
-
-    reply = await bot.wait_for("message", check=check, timeout=timeout)
-    value = reply.content.strip()
-    if optional and value.lower() == "skip":
-        return None
-    return value
-
-
-async def prompt_for_choice(
-    bot: commands.Bot,
-    user: discord.abc.User | discord.Member,
-    channel: discord.abc.Messageable,
-    prompt: str,
-    choices: dict[str, str],
-    *,
-    timeout: int = INTERACTIVE_TIMEOUT_SECONDS,
-) -> str:
-    choice_list = ", ".join(f"`{key}`" for key in choices)
-    await channel.send(f"{prompt}\nChoices: {choice_list}")
-
-    def check(message: discord.Message) -> bool:
-        return message.author.id == user.id and message.channel.id == channel.id
-
-    while True:
-        reply = await bot.wait_for("message", check=check, timeout=timeout)
-        selected = reply.content.strip().lower()
-        if selected in choices:
-            return choices[selected]
-        await channel.send(f"Please reply with one of: {choice_list}")
-
-
 def roll_dice(expression: str) -> tuple[list[int], int, int]:
     match = DICE_PATTERN.match(expression.strip())
     if not match:
@@ -300,12 +212,6 @@ def get_active_character_for_context(
     return store.get(user.id)
 
 
-def ensure_guild_id(guild: discord.Guild | None) -> int:
-    if guild is None:
-        raise commands.BadArgument("This command needs to be used in a server so the bot knows which active character to use.")
-    return guild.id
-
-
 def require_interaction_guild_id(interaction: discord.Interaction) -> int | None:
     if interaction.guild_id is None:
         return None
@@ -387,38 +293,24 @@ def build_bot() -> commands.Bot:
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
     load_dotenv()
-    prefix = os.getenv("COMMAND_PREFIX", "!")
     data_dir = Path(os.getenv("DATA_DIR", "data"))
     db_path = Path(os.getenv("DB_PATH", str(data_dir / "morkbotted.db")))
     sync_guild_id = os.getenv("COMMAND_SYNC_GUILD_ID", "").strip()
     gm_role_name = os.getenv("GM_ROLE_NAME", "scvm-gm").strip() or None
-    enable_message_content = os.getenv("ENABLE_MESSAGE_CONTENT_INTENT", "").strip().lower() in TRUE_ENV_VALUES
 
     intents = discord.Intents.default()
-    intents.message_content = enable_message_content
+
+    def no_prefix(_bot: commands.Bot, _message: discord.Message) -> list[str]:
+        return []
 
     bot = commands.Bot(
-        command_prefix=prefix,
+        command_prefix=no_prefix,
         intents=intents,
         help_command=None,
         allowed_mentions=discord.AllowedMentions.none(),
     )
     store = CharacterStore(db_path)
     slash_synced = False
-
-    def require_character(user: discord.abc.User) -> Character:
-        character = store.get(user.id)
-        if character is None:
-            raise commands.BadArgument(f"No character found for {user.display_name}. Start with `{prefix}create`.")
-        return character
-
-    def require_character_for_ctx(ctx: commands.Context) -> Character:
-        character = get_active_character_for_context(store, ctx.author, ctx.guild.id if ctx.guild else None)
-        if character is None:
-            raise commands.BadArgument(
-                f"No active character found for {ctx.author.display_name}. Use `/create` or `/character-switch`."
-            )
-        return character
 
     async def class_name_autocomplete(
         interaction: discord.Interaction,
@@ -599,15 +491,15 @@ def build_bot() -> commands.Bot:
             slash_synced = True
         print(f"Logged in as {bot.user} and ready to spread misery.")
 
-    @bot.command(name="ping")
-    async def ping(ctx: commands.Context) -> None:
+    @bot.tree.command(name="ping", description="Check whether the bot is online and responding.")
+    async def slash_ping(interaction: discord.Interaction) -> None:
         latency_ms = round(bot.latency * 1000)
-        await ctx.send(f"Pong. Gateway latency: `{latency_ms}ms`")
+        await interaction.response.send_message(f"Pong. Gateway latency: `{latency_ms}ms`", ephemeral=True)
 
-    @bot.command(name="helpmb")
-    async def helpmb(ctx: commands.Context) -> None:
+    @bot.tree.command(name="helpmb", description="Show MorkBotted slash command help.")
+    async def slash_helpmb(interaction: discord.Interaction) -> None:
         lines = [
-            "Slash commands are now the primary interface.",
+            "MorkBotted uses slash commands only.",
             "`/create` build or import a character with helper fields",
             "`/scvmbirth` generate a ready-to-play random character",
             "`/characters` list your roster",
@@ -619,372 +511,16 @@ def build_bot() -> commands.Bot:
             "`/classinfo` inspect one stored class",
             "`/sheet` show your character",
             "`/export` download your character sheet",
+            "`/roll` roll dice or roll one of your active character's abilities",
+            "`/setstat`, `/setfield`, and `/improve` update saved character values",
+            "`/additem` and `/removeitem` manage equipment",
+            "`/notes`, `/addnote`, `/editnote`, and `/removenote` manage notes",
             "`/gm-characters` show the current active party for this server",
             "`/gm-party-loot` track shared loot for this server",
             "`/gm-npcs` track NPCs for this server",
-            f"Legacy prefix commands still exist for now under `{prefix}`.",
-            f"`{prefix}setstat <ability> <value>` set agility, presence, strength, or toughness",
-            f"`{prefix}setfield <field> <value>` update name, class_name, background, description, hp, max_hp, omens, or silver",
-            f"`{prefix}improve <field> <delta>` increment stats, HP, omens, or silver without retyping totals",
-            f"`{prefix}omens`, `{prefix}omens roll`, or `{prefix}omens set 2` for daily Omens",
-            f"`{prefix}additem <item>` add a weapon, armor, scroll, or other equipment",
-            f"`{prefix}removeitem <item>` remove one equipment entry by exact text",
-            f"`{prefix}notes` list your numbered notes",
-            f"`{prefix}addnote <text>` add a note for scars, powers, debts, or session reminders",
-            f"`{prefix}editnote <number> <text>` replace a numbered note",
-            f"`{prefix}removenote <number>` remove a numbered note",
-            f"`{prefix}roll d6`, `{prefix}roll 2d8+1` for raw dice",
-            f"`{prefix}roll presence` or `{prefix}roll strength 14` for MORK BORG ability tests",
+            "`/gm-classes` and `/gm-features` manage server homebrew",
         ]
-        await ctx.send("\n".join(lines))
-
-    @bot.command(name="classes")
-    async def classes(ctx: commands.Context) -> None:
-        class_names = [class_template.name for class_template in store.list_classes(ctx.guild.id if ctx.guild else None)]
-        await ctx.send("Available classes:\n" + "\n".join(f"- {name}" for name in class_names))
-
-    @bot.command(name="classinfo")
-    async def classinfo(ctx: commands.Context, *, class_name: str) -> None:
-        class_template = store.find_class(class_name, ctx.guild.id if ctx.guild else None)
-        if class_template is None:
-            raise commands.BadArgument(
-                f"No stored class named `{escape_discord_text(class_name)}`. Try `{prefix}classes` to see available options."
-            )
-        await ctx.send(build_class_summary(class_template))
-
-    @bot.command(name="create")
-    async def create(ctx: commands.Context) -> None:
-        try:
-            dm_channel = await ensure_dm_channel(ctx.author)
-        except discord.Forbidden:
-            await ctx.send("I couldn't DM you. Please enable direct messages from server members and try `!create` again.")
-            return
-
-        await ctx.send("I sent you a DM with the character form. Reply there and I'll save it privately.")
-        await dm_channel.send(
-            "Fill out this character form in one message and send it back here. "
-            f"The import window stays open for {INTERACTIVE_TIMEOUT_SECONDS // 60} minutes.\n\n"
-            f"```text\n{CREATE_FORM_TEMPLATE}```"
-        )
-
-        try:
-            form_reply = await prompt_for_response(
-                bot,
-                ctx.author,
-                dm_channel,
-                "Send back the completed form.",
-            )
-        except TimeoutError:
-            await dm_channel.send("Character creation timed out before it was finished. Run `!create` again when you're ready.")
-            return
-
-        form_data = parse_form_reply(form_reply or "")
-        required_fields = ["name", "class", "agility", "presence", "strength", "toughness", "hp", "max_hp", "omens", "silver"]
-        missing = [field for field in required_fields if not form_data.get(field)]
-        if missing:
-            await dm_channel.send(
-                "I couldn't save that character because some required fields were missing: "
-                + ", ".join(f"`{field}`" for field in missing)
-            )
-            return
-
-        try:
-            character = create_character_from_values(
-                store,
-                user_id=ctx.author.id,
-                discord_name=ctx.author.display_name,
-                name=form_data["name"],
-                class_name=form_data["class"],
-                background=form_data.get("background", ""),
-                description=form_data.get("description", ""),
-                agility=form_data["agility"],
-                presence=form_data["presence"],
-                strength=form_data["strength"],
-                toughness=form_data["toughness"],
-                hp=form_data["hp"],
-                max_hp=form_data["max_hp"],
-                omens=form_data["omens"],
-                silver=form_data["silver"],
-                equipment=form_data.get("equipment"),
-                notes=form_data.get("notes"),
-                class_feature=form_data.get("class_feature"),
-                guild_id=ctx.guild.id if ctx.guild else None,
-            )
-        except CharacterCreationError as error:
-            await dm_channel.send(f"I couldn't save that character. {error}")
-            return
-        if ctx.guild is not None and character.id is not None:
-            store.set_active_character(ctx.guild.id, ctx.author.id, character.id)
-        await dm_channel.send("Character created and saved.")
-        await dm_channel.send(build_character_sheet(character))
-        await ctx.send(f"Saved **{escape_discord_text(character.name)}** from your DM form.")
-
-    @bot.command(name="gettingbetter")
-    async def gettingbetter(ctx: commands.Context) -> None:
-        character = require_character_for_ctx(ctx)
-        try:
-            dm_channel = await ensure_dm_channel(ctx.author)
-        except discord.Forbidden:
-            await ctx.send(
-                "I couldn't DM you. Please enable direct messages from server members and try `!gettingbetter` again."
-            )
-            return
-
-        await ctx.send("I sent you a DM for the `Getting Better` flow so we can keep the channel clean.")
-        mode_choices = {
-            "auto": "auto",
-            "automatic": "auto",
-            "a": "auto",
-            "manual": "manual",
-            "m": "manual",
-        }
-        direction_choices = {
-            "up": "up",
-            "+": "up",
-            "down": "down",
-            "-": "down",
-            "stay": "stay",
-            "same": "stay",
-            "0": "stay",
-        }
-
-        try:
-            mode = await prompt_for_choice(
-                bot,
-                ctx.author,
-                dm_channel,
-                "Choose `Getting Better` mode. Automatic rolls a d6 for each ability. Manual lets you choose up, down, or stay for each ability.",
-                mode_choices,
-            )
-        except TimeoutError:
-            await dm_channel.send("`!gettingbetter` timed out before a mode was chosen. Run it again when you're ready.")
-            return
-
-        summaries: list[str] = []
-
-        if mode == "auto":
-            for ability_name in ABILITY_NAMES:
-                current_value = character.get_ability(ability_name)
-                roll = random.randint(1, 6)
-
-                if current_value <= 1:
-                    proposed_value = current_value - 1 if roll == 1 else current_value + 1
-                else:
-                    proposed_value = current_value + 1 if roll >= current_value else current_value - 1
-
-                new_value = clamp_ability(proposed_value)
-                character.set_ability(ability_name, new_value)
-
-                if new_value > current_value:
-                    summaries.append(
-                        f"`{ability_name.title()}` {current_value:+d} -> `{new_value:+d}` from `d6({roll})`"
-                    )
-                elif new_value < current_value:
-                    summaries.append(
-                        f"`{ability_name.title()}` {current_value:+d} -> `{new_value:+d}` from `d6({roll})`"
-                    )
-                else:
-                    summaries.append(
-                        f"`{ability_name.title()}` stayed at `{new_value:+d}` from `d6({roll})` because it hit a cap"
-                    )
-        else:
-            try:
-                for ability_name in ABILITY_NAMES:
-                    current_value = character.get_ability(ability_name)
-                    direction = await prompt_for_choice(
-                        bot,
-                        ctx.author,
-                        dm_channel,
-                        f"What happens to `{ability_name.title()}`? Current value: `{current_value:+d}`",
-                        direction_choices,
-                    )
-                    if direction == "up":
-                        new_value = clamp_ability(current_value + 1)
-                    elif direction == "down":
-                        new_value = clamp_ability(current_value - 1)
-                    else:
-                        new_value = current_value
-
-                    character.set_ability(ability_name, new_value)
-                    summaries.append(f"`{ability_name.title()}` {current_value:+d} -> `{new_value:+d}`")
-            except TimeoutError:
-                await dm_channel.send("`!gettingbetter` timed out during manual selection. Run it again when you're ready.")
-                return
-
-        character.discord_name = ctx.author.display_name
-        store.upsert(character)
-        await dm_channel.send(f"**{escape_discord_text(character.name)}** has gotten better.\n" + "\n".join(summaries))
-        await dm_channel.send(build_character_sheet(character))
-        await ctx.send(f"Updated **{escape_discord_text(character.name)}** through DM.")
-
-    @bot.command(name="sheet")
-    async def sheet(ctx: commands.Context) -> None:
-        character = require_character_for_ctx(ctx)
-        await ctx.send(build_character_sheet(character))
-
-    @bot.command(name="export")
-    async def export(ctx: commands.Context) -> None:
-        character = require_character_for_ctx(ctx)
-        payload = BytesIO(character.export_text().encode("utf-8"))
-        await ctx.send(
-            content=f"Export for **{escape_discord_text(character.name)}**",
-            file=discord.File(payload, filename=safe_export_filename(character.id, character.name)),
-        )
-
-    @bot.command(name="setstat")
-    async def setstat(ctx: commands.Context, ability: str, value: str) -> None:
-        character = require_character_for_ctx(ctx)
-        normalized = normalize_ability_name(ability)
-        parsed_value = parse_int(value)
-        character.discord_name = ctx.author.display_name
-        character.set_ability(normalized, parsed_value)
-        store.upsert(character)
-        await ctx.send(f"{normalized.title()} set to `{parsed_value:+d}` for **{escape_discord_text(character.name)}**.")
-
-    @bot.command(name="setfield")
-    async def setfield(ctx: commands.Context, field_name: str, *, value: str) -> None:
-        character = require_character_for_ctx(ctx)
-        normalized = field_name.lower().strip()
-        if normalized not in EDITABLE_FIELDS:
-            choices = ", ".join(sorted(EDITABLE_FIELDS))
-            raise commands.BadArgument(f"Unknown field '{field_name}'. Use one of: {choices}.")
-
-        character.discord_name = ctx.author.display_name
-        if normalized in {"hp", "max_hp", "omens", "silver"}:
-            setattr(character, normalized, parse_int(value))
-        elif normalized == "class_name":
-            apply_class_selection(store, character, validate_text(value, "class_name"), ctx.guild.id if ctx.guild else None)
-        else:
-            setattr(character, normalized, validate_text(value, normalized))
-
-        store.upsert(character)
-        await ctx.send(f"{normalized} updated for **{escape_discord_text(character.name)}**.")
-
-    @bot.command(name="improve")
-    async def improve(ctx: commands.Context, field_name: str, delta: str) -> None:
-        character = require_character_for_ctx(ctx)
-        normalized = field_name.lower().strip()
-        amount = parse_int(delta)
-
-        if normalized in ABILITY_NAMES:
-            current_value = character.get_ability(normalized)
-            new_value = current_value + amount
-            character.set_ability(normalized, new_value)
-        elif normalized in {"hp", "max_hp", "omens", "silver"}:
-            current_value = getattr(character, normalized)
-            new_value = current_value + amount
-            setattr(character, normalized, new_value)
-        else:
-            allowed = ", ".join(list(ABILITY_NAMES) + ["hp", "max_hp", "omens", "silver"])
-            raise commands.BadArgument(f"Unknown improvement field '{field_name}'. Use one of: {allowed}.")
-
-        character.discord_name = ctx.author.display_name
-        store.upsert(character)
-        await ctx.send(
-            f"{normalized} adjusted by `{amount:+d}`. New value for **{escape_discord_text(character.name)}**: `{new_value:+d}`"
-        )
-
-    @bot.command(name="omens")
-    async def omens(ctx: commands.Context, action: str = "status", amount: str | None = None) -> None:
-        character = require_character_for_ctx(ctx)
-        try:
-            parsed_amount = parse_int(amount) if amount is not None else None
-            message = apply_omen_action(character, action, parsed_amount)
-        except ValueError as error:
-            raise commands.BadArgument(str(error)) from error
-
-        character.discord_name = ctx.author.display_name
-        if action.lower().strip() in {"roll", "daily", "newday", "new-day", "set", "record"}:
-            store.upsert(character)
-        await ctx.send(message)
-
-    @bot.command(name="additem")
-    async def additem(ctx: commands.Context, *, item: str) -> None:
-        character = require_character_for_ctx(ctx)
-        character.discord_name = ctx.author.display_name
-        if len(character.equipment) >= MAX_EQUIPMENT_ITEMS:
-            raise commands.BadArgument(f"Characters can have at most {MAX_EQUIPMENT_ITEMS} equipment entries.")
-        clean_item = validate_text(item, "equipment", required=True)
-        character.equipment.append(clean_item)
-        store.upsert(character)
-        await ctx.send(f"Added `{escape_discord_text(clean_item)}` to **{escape_discord_text(character.name)}**.")
-
-    @bot.command(name="removeitem")
-    async def removeitem(ctx: commands.Context, *, item: str) -> None:
-        character = require_character_for_ctx(ctx)
-        target = item.strip()
-        try:
-            character.equipment.remove(target)
-        except ValueError as error:
-            raise commands.BadArgument(f"`{escape_discord_text(target)}` was not found on your equipment list.") from error
-        store.upsert(character)
-        await ctx.send(f"Removed `{escape_discord_text(target)}` from **{escape_discord_text(character.name)}**.")
-
-    @bot.command(name="addnote")
-    async def addnote(ctx: commands.Context, *, note: str) -> None:
-        character = require_character_for_ctx(ctx)
-        try:
-            add_character_note(character, note)
-        except ValueError as error:
-            raise commands.BadArgument(str(error)) from error
-        character.discord_name = ctx.author.display_name
-        store.upsert(character)
-        await ctx.send(f"Added note to **{escape_discord_text(character.name)}**.\n{format_notes(character)}")
-
-    @bot.command(name="notes")
-    async def notes(ctx: commands.Context) -> None:
-        character = require_character_for_ctx(ctx)
-        await ctx.send(f"Notes for **{escape_discord_text(character.name)}**:\n{format_notes(character)}")
-
-    @bot.command(name="editnote")
-    async def editnote(ctx: commands.Context, note_number: int, *, note: str) -> None:
-        character = require_character_for_ctx(ctx)
-        try:
-            update_character_note(character, note_number, note)
-        except ValueError as error:
-            raise commands.BadArgument(str(error)) from error
-        character.discord_name = ctx.author.display_name
-        store.upsert(character)
-        await ctx.send(f"Updated note `{note_number}` for **{escape_discord_text(character.name)}**.\n{format_notes(character)}")
-
-    @bot.command(name="removenote")
-    async def removenote(ctx: commands.Context, note_number: int) -> None:
-        character = require_character_for_ctx(ctx)
-        try:
-            removed_note = remove_character_note(character, note_number)
-        except ValueError as error:
-            raise commands.BadArgument(str(error)) from error
-        character.discord_name = ctx.author.display_name
-        store.upsert(character)
-        await ctx.send(
-            f"Removed note `{note_number}` from **{escape_discord_text(character.name)}**: "
-            f"{escape_discord_text(removed_note)}\n{format_notes(character)}"
-        )
-
-    @bot.command(name="roll")
-    async def roll(ctx: commands.Context, target: str, dr: int = DEFAULT_DR) -> None:
-        lowered = target.lower().strip()
-        if lowered in ABILITY_NAMES or lowered in ABILITY_ALIAS_SET:
-            character = require_character_for_ctx(ctx)
-            ability_name = normalize_ability_name(lowered)
-            modifier = character.get_ability(ability_name)
-            die = random.randint(1, 20)
-            total = die + modifier
-            outcome = "Success" if total >= dr else "Failure"
-            await ctx.send(
-                f"**{escape_discord_text(character.name)}** rolls `{ability_name.title()}`: "
-                f"`d20({die}) {modifier:+d} = {total}` vs DR `{dr}` -> **{outcome}**"
-            )
-            return
-
-        rolls, modifier, total = roll_dice(lowered)
-        modifier_text = f" {modifier:+d}" if modifier else ""
-        await ctx.send(f"Rolled `{target}` -> {rolls}{modifier_text} = **{total}**")
-
-    @bot.tree.command(name="ping", description="Check whether the bot is online and responding.")
-    async def slash_ping(interaction: discord.Interaction) -> None:
-        latency_ms = round(bot.latency * 1000)
-        await interaction.response.send_message(f"Pong. Gateway latency: `{latency_ms}ms`", ephemeral=True)
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
     @bot.tree.command(name="classes", description="List the class templates stored in the bot database.")
     async def slash_classes(interaction: discord.Interaction) -> None:
@@ -1990,18 +1526,6 @@ def build_bot() -> commands.Bot:
             + build_character_sheet(character),
             ephemeral=True,
         )
-
-    @bot.event
-    async def on_command_error(ctx: commands.Context, error: commands.CommandError) -> None:
-        if isinstance(error, commands.CommandNotFound):
-            return
-        if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.send(f"Missing input: {error.param.name}. Try `{prefix}helpmb`.")
-            return
-        if isinstance(error, commands.BadArgument):
-            await ctx.send(str(error))
-            return
-        raise error
 
     @bot.tree.error
     async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:

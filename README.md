@@ -11,8 +11,8 @@
 - Stored class templates and feature data for core and supplemental MORK BORG classes, including Dire Hunter
 - Server-scoped GM homebrew classes and reusable class features
 - Ability modifiers for Agility, Presence, Strength, and Toughness
-- Raw dice expressions like `!roll d6` or `!roll 2d8+1`
-- MORK BORG-style tests like `!roll strength` or `!roll presence 14`
+- Raw dice expressions like `/roll target:d6` or `/roll target:2d8+1`
+- MORK BORG-style tests like `/roll target:strength` or `/roll target:presence dr:14`
 - Slash-command `gettingbetter` flow with typed helper choices
 - Character sheet export as a `.txt` attachment
 - In-bot updates for stats, HP, Omens, silver, equipment, and notes
@@ -48,8 +48,7 @@ Copy-Item .env.example .env
 
 5. Edit `.env` and set `DISCORD_TOKEN` to your Discord bot token. `DB_PATH` defaults to `data/morkbotted.db`.
 6. Optional but recommended for faster slash-command updates while you deploy changes: set `COMMAND_SYNC_GUILD_ID` to your main Discord server id.
-7. Optional: if you want to keep using legacy `!` commands, enable the `MESSAGE CONTENT INTENT` in the Discord developer portal and set `ENABLE_MESSAGE_CONTENT_INTENT=true` in `.env`. Slash commands do not need this privileged intent.
-8. Run the bot:
+7. Run the bot:
 
 ```powershell
 python bot.py
@@ -62,6 +61,7 @@ If `COMMAND_SYNC_GUILD_ID` is set, the bot also syncs slash commands directly in
 ## Slash commands
 
 - `/create`
+- `/helpmb`
 - `/scvmbirth`
 - `/characters`
 - `/character-switch`
@@ -200,10 +200,9 @@ Use these commands to manage table-facing campaign state:
 - `/gm-features` to list reusable homebrew features for the current server
 - `/gm-feature-link` to attach one reusable feature to one or more classes in the current server
 
-## Legacy prefix commands
+## Slash-only commands
 
-The older `!` commands are still present for compatibility, but slash commands are now the primary interface and the recommended one for your next server deploy.
-Legacy prefix commands require `ENABLE_MESSAGE_CONTENT_INTENT=true` and Discord's Message Content Intent developer-portal toggle. Leave it disabled if you only use slash commands.
+MorkBotted only exposes slash commands. It does not require Discord's privileged Message Content Intent, and `!` prefix commands are no longer registered.
 
 ## Suggested next upgrades
 
