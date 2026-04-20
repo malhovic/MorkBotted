@@ -1,4 +1,5 @@
 import unittest
+import sqlite3
 from pathlib import Path
 
 from morkbotted.character import Character
@@ -148,6 +149,50 @@ class GMStorageTest(unittest.TestCase):
         self.assertEqual(created.class_name, "Grave Botanist")
         self.assertEqual(len(created.selected_class_feature_ids), 1)
         self.assertIn("Rootbound", "\n".join(created.sheet_lines()))
+
+    def test_existing_global_class_schema_migrates_before_guild_indexes(self) -> None:
+        self._remove_test_db()
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.executescript(
+                """
+                CREATE TABLE classes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    slug TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL UNIQUE,
+                    source TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    starting_silver TEXT,
+                    omen_die TEXT,
+                    hp_formula TEXT,
+                    ability_summary TEXT,
+                    equipment_summary TEXT,
+                    notes TEXT
+                );
+
+                CREATE TABLE class_features (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    class_id INTEGER NOT NULL,
+                    category TEXT NOT NULL,
+                    roll_label TEXT,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
+                );
+                """
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        store = CharacterStore(self.db_path)
+        created = store.create_homebrew_class(100, name="Grave Botanist", description="Cultivates corpse flowers.")
+
+        self.assertIsNotNone(store.find_class("Classless"))
+        self.assertEqual(created.guild_id, 100)
+        self.assertIn("Grave Botanist", [item.name for item in store.list_classes(100)])
 
 
 if __name__ == "__main__":

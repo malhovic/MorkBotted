@@ -194,22 +194,6 @@ class CharacterStore:
                 """
             )
 
-            connection.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_classes_global_slug ON classes(lower(slug)) WHERE guild_id IS NULL"
-            )
-            connection.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_classes_global_name ON classes(lower(name)) WHERE guild_id IS NULL"
-            )
-            connection.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_classes_guild_slug ON classes(guild_id, lower(slug)) WHERE guild_id IS NOT NULL"
-            )
-            connection.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_classes_guild_name ON classes(guild_id, lower(name)) WHERE guild_id IS NOT NULL"
-            )
-            connection.execute(
-                "CREATE INDEX IF NOT EXISTS idx_class_features_guild ON class_features(guild_id, lower(name), id)"
-            )
-
     def _migrate_homebrew_class_schema(self) -> None:
         with self._connect() as connection:
             class_columns = self._table_columns(connection, "classes")
@@ -286,7 +270,32 @@ class CharacterStore:
                         FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
                         FOREIGN KEY (class_feature_id) REFERENCES class_features(id) ON DELETE CASCADE
                     );
+                    """
+                )
 
+                link_targets = self._foreign_key_targets(connection, "class_feature_links")
+                if "classes_old" in link_targets or "class_features_old" in link_targets:
+                    connection.executescript(
+                        """
+                        ALTER TABLE class_feature_links RENAME TO class_feature_links_fk_old;
+                        CREATE TABLE class_feature_links (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            class_id INTEGER NOT NULL,
+                            class_feature_id INTEGER NOT NULL,
+                            position INTEGER NOT NULL,
+                            UNIQUE (class_id, class_feature_id),
+                            FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
+                            FOREIGN KEY (class_feature_id) REFERENCES class_features(id) ON DELETE CASCADE
+                        );
+                        INSERT OR IGNORE INTO class_feature_links (id, class_id, class_feature_id, position)
+                        SELECT id, class_id, class_feature_id, position
+                        FROM class_feature_links_fk_old;
+                        DROP TABLE class_feature_links_fk_old;
+                        """
+                    )
+
+                connection.executescript(
+                    """
                     INSERT OR IGNORE INTO class_feature_links (class_id, class_feature_id, position)
                     SELECT class_id, id, position
                     FROM class_features
