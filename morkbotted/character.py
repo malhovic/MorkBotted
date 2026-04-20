@@ -167,6 +167,8 @@ class Character:
         ]
         if self.class_template:
             lines.append(f"Class Source: {self.class_template.source}")
+            if self.class_template.omen_die:
+                lines.append(f"Daily Omens: {self.class_template.omen_die}")
         for feature in selected_features:
             prefix = f"[{feature.roll_label}] " if feature.roll_label else ""
             lines.append(f"Class Feature: {prefix}{feature.name}: {feature.description}")

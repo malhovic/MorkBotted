@@ -20,6 +20,7 @@ from morkbotted.creation import (
     parse_int,
 )
 from morkbotted.generator import generate_random_character
+from morkbotted.omens import omen_status_text, roll_daily_omens
 from morkbotted.storage import CharacterStore
 
 DICE_PATTERN = re.compile(r"^(?P<count>\d*)d(?P<sides>\d+)(?P<modifier>[+-]\d+)?$", re.IGNORECASE)
@@ -227,6 +228,27 @@ def run_getting_better(character: Character, mode: str, manual_choices: dict[str
         summaries.append(f"`{ability_name.title()}` {current_value:+d} -> `{new_value:+d}`")
 
     return summaries
+
+
+def apply_omen_action(character: Character, action: str, amount: int | None = None) -> str:
+    normalized = action.lower().strip()
+    if normalized in {"", "status", "show", "recall"}:
+        return omen_status_text(character)
+
+    if normalized in {"roll", "daily", "newday", "new-day"}:
+        rolled = roll_daily_omens(character)
+        character.omens = rolled
+        return f"**{character.name}** rolls daily omens and gets `{rolled}`. {omen_status_text(character)}"
+
+    if normalized in {"set", "record"}:
+        if amount is None:
+            raise ValueError("Give the number of omens to record, like `/omens set 2`.")
+        if amount < 0:
+            raise ValueError("Omens cannot be below 0.")
+        character.omens = amount
+        return f"**{character.name}** now has `{character.omens}` omen(s) recorded. {omen_status_text(character)}"
+
+    raise ValueError("Use `status`, `roll`, or `set`.")
 
 
 def get_active_character_for_context(
@@ -439,6 +461,7 @@ def build_bot() -> commands.Bot:
             "`/character-switch` set the active character for this server",
             "`/character-archive` mark a character archived, dead, npc, or active",
             "`/gettingbetter` update stats with typed options",
+            "`/omens` show, roll, or record your current daily Omens",
             "`/classes` list stored classes",
             "`/classinfo` inspect one stored class",
             "`/sheet` show your character",
@@ -447,6 +470,7 @@ def build_bot() -> commands.Bot:
             f"`{prefix}setstat <ability> <value>` set agility, presence, strength, or toughness",
             f"`{prefix}setfield <field> <value>` update name, class_name, background, description, hp, max_hp, omens, or silver",
             f"`{prefix}improve <field> <delta>` increment stats, HP, omens, or silver without retyping totals",
+            f"`{prefix}omens`, `{prefix}omens roll`, or `{prefix}omens set 2` for daily Omens",
             f"`{prefix}additem <item>` add a weapon, armor, scroll, or other equipment",
             f"`{prefix}removeitem <item>` remove one equipment entry by exact text",
             f"`{prefix}addnote <text>` add a note for scars, powers, debts, or session reminders",
@@ -700,6 +724,20 @@ def build_bot() -> commands.Bot:
         await ctx.send(
             f"{normalized} adjusted by `{amount:+d}`. New value for **{character.name}**: `{new_value:+d}`"
         )
+
+    @bot.command(name="omens")
+    async def omens(ctx: commands.Context, action: str = "status", amount: str | None = None) -> None:
+        character = require_character_for_ctx(ctx)
+        try:
+            parsed_amount = parse_int(amount) if amount is not None else None
+            message = apply_omen_action(character, action, parsed_amount)
+        except ValueError as error:
+            raise commands.BadArgument(str(error)) from error
+
+        character.discord_name = ctx.author.display_name
+        if action.lower().strip() in {"roll", "daily", "newday", "new-day", "set", "record"}:
+            store.upsert(character)
+        await ctx.send(message)
 
     @bot.command(name="additem")
     async def additem(ctx: commands.Context, *, item: str) -> None:
@@ -1049,6 +1087,32 @@ def build_bot() -> commands.Bot:
             f"{normalized.title()} set to `{parsed_value:+d}` for **{character.name}**.",
             ephemeral=True,
         )
+
+    @bot.tree.command(name="omens", description="Show, roll, or record your current daily Omens.")
+    @app_commands.describe(action="Show current omens, roll today's omens, or record a manual count", amount="Required when action is set")
+    @app_commands.choices(
+        action=[
+            app_commands.Choice(name="Status", value="status"),
+            app_commands.Choice(name="Roll daily omens", value="roll"),
+            app_commands.Choice(name="Set current omens", value="set"),
+        ]
+    )
+    async def slash_omens(interaction: discord.Interaction, action: str = "status", amount: int | None = None) -> None:
+        character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
+        if character is None:
+            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
+            return
+
+        try:
+            message = apply_omen_action(character, action, amount)
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+
+        character.discord_name = interaction.user.display_name
+        if action.lower().strip() in {"roll", "daily", "newday", "new-day", "set", "record"}:
+            store.upsert(character)
+        await interaction.response.send_message(message, ephemeral=True)
 
     @bot.tree.command(name="setfield", description="Update one saved character field.")
     @app_commands.describe(field_name="Field such as hp, background, or class_name", value="New value")

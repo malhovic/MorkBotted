@@ -70,6 +70,7 @@ If `COMMAND_SYNC_GUILD_ID` is set, the bot also syncs slash commands directly in
 - `/classinfo`
 - `/sheet`
 - `/export`
+- `/omens`
 - `/gettingbetter`
 - `/setstat`
 - `/setfield`
@@ -93,6 +94,12 @@ This version updates the four core abilities:
 - Presence
 - Strength
 - Toughness
+
+## Omens
+
+Characters store their current Omens and derive their daily omen die from their linked class, such as `d2`, `d3`, or `d4`.
+
+Use `/omens` to recall the current count and daily die. Use `/omens roll` at the start of a new day to roll the character's daily Omens and save that result. Use `/omens set` with an amount to record a manual count.
 
 ## Create flow
 
