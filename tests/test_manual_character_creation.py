@@ -153,6 +153,40 @@ class ManualCharacterCreationTest(unittest.TestCase):
         self.assertEqual(raised.exception.field_name, "agility")
         self.assertIn("Ability modifiers look like", str(raised.exception))
 
+    def test_invalid_manual_create_lists_every_bad_field(self) -> None:
+        store = CharacterStore(self.db_path)
+
+        with self.assertRaises(CharacterCreationError) as raised:
+            create_character_from_values(
+                store,
+                user_id=98468186063663104,
+                discord_name="malhovic",
+                name="",
+                class_name="Cursed Skinwalker",
+                background="",
+                description="Cruel. Deceitful. Forgotten by himself.",
+                agility="",
+                presence="raw 13",
+                strength="2",
+                toughness="",
+                hp="",
+                max_hp="9",
+                omens="",
+                silver="90",
+                equipment="",
+                notes="",
+            )
+
+        self.assertEqual(raised.exception.field_name, "fields")
+        message = str(raised.exception)
+        self.assertIn("Fix these fields", message)
+        self.assertIn("`name`", message)
+        self.assertIn("`agility`", message)
+        self.assertIn("`presence`", message)
+        self.assertIn("`toughness`", message)
+        self.assertIn("`hp`", message)
+        self.assertIn("`omens`", message)
+
     def test_invalid_manual_class_feature_lists_valid_options(self) -> None:
         store = CharacterStore(self.db_path)
 
