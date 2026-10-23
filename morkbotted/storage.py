@@ -440,7 +440,7 @@ class CharacterStore:
 
         with self._connect() as connection:
             repair_needed = any(
-                "characters_old" in self._foreign_key_targets(connection, table_name)
+                "characters" not in self._foreign_key_targets(connection, table_name)
                 for table_name in dependent_tables
             )
             if not repair_needed:
