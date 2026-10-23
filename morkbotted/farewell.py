@@ -210,6 +210,129 @@ WAR_SCROLLS = [
     "Take Me to Your Leader", "The Trooper", "War Pigs",
 ]
 
+WAR_SCROLL_DETAILS = {
+    "Nay-Palm": "Choose d3 creatures. They ignite and die in d4 turns; their flames spread to anything they touch.",
+    "Bite the Bullet": "A target already wounded by a firearm immediately suffers that firearm's damage again. This effect has IMPACT 4.",
+    "For Whom the Bell Tolls": "Everyone within roughly 30 feet suffers SHOCK.",
+    "Afraid to Shoot Strangers": "Every firearm near the reader jams for d4 turns.",
+    "Lay of the Land": "Spectral movement reshapes the battlefield and raises Full cover from the earth.",
+    "Red Badge of Courage": "One creature ignores SHOCK and spends no Ammo for d4 rounds, but enemies prioritize that creature.",
+    "GAS!": "The immediate area fills with toxic GAS.",
+    "Trenchfoot": "The ground traps one target. Its armor loses one Tier each turn until it passes Strength DR12 to escape.",
+    "Full Metal Jacket": "Sacrifice d2 Ammo and gain one Tier of armor for each point sacrificed.",
+    "Apocalypse Later": "Reduce d2 allies' SHOCK to zero. Each suffers d10 SHOCK the following morning.",
+    "Night and Day": "Change day into night or night into day, then trigger equipment that refreshes on the next day.",
+    "Black Candles Burn, All Minds Align": "Redistribute the squad's combined SHOCK as evenly as possible among nearby allied grvnts.",
+    "Misfire": "All Ammo within roughly 30 feet explodes for d4 damage.",
+    "Tumbling Down": "Nearby structures collapse to the reader's level. Occupants suffer d3 damage per demolished level.",
+    "Gunpowder Plot": "Use a Warlord Order twice during the mission. The Warlord dies when the mission ends.",
+    "Magnum Opus": "Summon a phantom 666 Shooter that attacks d6 targets; on most results, the reader is also targeted.",
+    "VEX's Assistant": "Blue light removes d2 random allies who fail Presence and d4 enemies from the battlefield to an unknown destination.",
+    "Take Me to Your Leader": "Gain a random Warlord Order belonging to an opposing faction.",
+    "The Trooper": "d2 allies may close on a firearm-wielding enemy while that enemy fires.",
+    "War Pigs": "A ravenous stampede deals 4d10 damage divided among everything in its path.",
+}
+
+SHOCK_EFFECTS = [
+    "The Shakes — always act last in Initiative.",
+    "Primal Fear — the next SHOCK increase uses d6.",
+    "Thousand-League Stare — leave an item behind.",
+    "Visions of Death — subtract 1 from all damage rolls.",
+    "Jammed — unable to choose a target for d2 rounds.",
+    "Blind Fire — immediately fire at the nearest enemy against DR16.",
+    "Despair — lose an Omen; if none remain, suffer Dark Thoughts.",
+    "Dark Thoughts — harm yourself with your Side Arm.",
+    "Panic — flee toward safety and inflict SHOCK on nearby allies.",
+    "Confusion — attack the nearest comrade with your strongest weapon.",
+    "Abject Sorrow — drop your weapons and run directly at the enemy.",
+    "Endgame — die where you stand.",
+]
+
+FAREWELL_RULE_REFERENCE = {
+    "combat": (
+        "Roll d6 for group Initiative: enemies act first on 1–3 and players on 4–6. Melee tests Strength DR12, ranged attacks test "
+        "Presence DR12, and defense tests Agility DR12, all adjusted by cover or Aim. A natural 20 improves the result; a natural 1 causes a fumble."
+    ),
+    "stats": (
+        "Stats are modifiers, normally from -3 to +3 at enlistment. Roll d20 plus the relevant Stat and meet or beat the DR. "
+        "Toughness resists SHOCK, GAS, cold, and heat; Agility handles defense, stealth, and explosions; Presence covers shooting, "
+        "perception, and War Scrolls; Strength covers melee, throwing, grappling, and carrying heavy squad equipment."
+    ),
+    "hp": (
+        "A grvnt at 0 or -1 HP rolls on the Downed table and may recover, suffer SHOCK, or die. At -2 HP or lower, death is certain. "
+        "Starting HP can never be below 1."
+    ),
+    "omens": (
+        "Omens refresh to the class allotment at dawn after all have been spent. Spend one to maximize attack damage, reroll any die, "
+        "reduce incoming damage by d6, cancel a critical or fumble, or lower one test's DR by 4."
+    ),
+    "ammo": (
+        "Ammo is an abstract supply rather than individual rounds. Roll the class's Ammo die at dawn only when completely empty. "
+        "Some weapons spend Ammo differently or ignore it entirely."
+    ),
+    "powers": (
+        "At each grey dawn, Powers equal Presence + d4, with a minimum of zero in this bot. Spend Powers on class specialties or War Scroll effects. "
+        "Reading a War Scroll normally tests Presence DR12; failure costs d2 HP and d2 SHOCK, while a fumble destroys the scroll and causes an accident."
+    ),
+    "shock": (
+        "When SHOCK is inflicted, test Toughness DR14. On failure, add d4 SHOCK and immediately resolve the effect matching the new total. "
+        "Reducing SHOCK does not retrigger effects. Rest, food, drink, and some abilities can provide relief."
+    ),
+    "firearm": "Ranged firearm attacks normally test Presence DR12, adjusted by Aim and cover. Firearms cannot be reloaded in melee and are +2 DR to fire there.",
+    "sidearm": "Side Arms support close combat, emergency ranged attacks, grenades, shields, and specialized battlefield effects. Their listed keywords apply in order.",
+    "armor": "Armor reduces incoming damage by its die. HEAVY hits can destroy a Tier. Helmets may be broken to prevent all damage from one attack.",
+    "gear": "SHIT is the grvnt's carried support equipment. Capacity comes from the rolled carrier plus two normal-sized items unless another rule changes it.",
+    "reason": "Reason for Enlistment is a roleplaying prompt explaining why this grvnt entered the war; it has no default mechanical effect.",
+    "battle_scar": "A Battle Scar records lasting wartime injury. Unless its entry gives a rule, treat it as descriptive until the GM makes it relevant.",
+    "vice": "A Vice is how the grvnt copes with the war. Vices can help contextualize rest, addiction, withdrawal, and roleplay.",
+    "weapon_keywords": (
+        "SCOPED grants automatic Aim but cannot be used in melee. BLAST (X) damages X nearby targets. IMPACT (X) ignores X Armor Tiers. "
+        "HEAVY degrades cover and destroys one Armor Tier on a hit. SHOCK forces Toughness DR14 or a d4 SHOCK result. "
+        "BURN (X) deals d4 damage for the next X rounds. Apply keywords in that order."
+    ),
+    "cover": (
+        "Partial cover adjusts attacks and defense by 2 DR; Full cover adjusts them by 4 DR; Total cover prevents targeting except from HEAVY attacks. "
+        "HEAVY degrades Total to Full, Full to Partial, and destroys Partial cover."
+    ),
+    "rest": (
+        "A smoke and a ration restore d4 HP. A full night's sleep restores d6 HP and relieves d2 SHOCK. Without rations, resting cannot heal; "
+        "after two days of starvation, lose d4 HP daily. Infection prevents healing and instead costs d6 HP per day."
+    ),
+}
+
+CLASS_EXTRA_REFERENCE = {
+    "expendable-sapper": (
+        "Throwing grenades is 2 DR easier, and the Sapper is immune to BLAST damage. Whenever Ammo is rerolled, also roll d3 on Side Arms to restock grenades."
+    ),
+    "homesick-rifleman": (
+        "In addition to a special Malevolent Rifle, roll one keepsake: trapped Letters from Home, a damage-blocking Stop Watch, "
+        "SHOCK-channeling Purple Heart Poetry, or a Lovesick painting that enables one automatic random War Scroll each day."
+    ),
+    "altered-mercenary": (
+        "Add the rolled beast number (1–6) to starting HP. Altered Mercenaries cannot use firearms or armor of Tier 2 or higher."
+    ),
+    "embedded-one": (
+        "Once per day, summon the chosen Ether. Movement grants the squad d6 immediate actions. Growth enlarges or shrinks nearby creatures. "
+        "Decay destroys firearms, armor, or flesh based on 3d6. Interdependence supplies four dice allies may add or subtract and clears squad SHOCK. "
+        "Curiosity rolls five dice to acquire three pieces of SHIT. Time rolls six dice: low totals inflict enemy SHOCK, middle totals force Morale, and high totals deal damage."
+    ),
+    "radiant-bannerman": (
+        "The fused Bannerspear deals d6 with IMPACT 1 and is visible from far away. Banner color determines the specialty."
+    ),
+    "new-world-engineer": (
+        "Begin with two Muskoxen (HP 14) hauling prepared structures. Choose two different structures and construct each once per mission."
+    ),
+    "despondent-interpreter": (
+        "Unthreatening gives a 1-in-2 chance to be ignored in combat. When nearby enemies test Morale, improve the result by 1. "
+        "Record twenty listed battlefield events; every three completed events grants a permanent squad bonus, chosen once from the class list."
+    ),
+    "sadistic-soldier": (
+        "All melee weapons deal +d2 damage. Each melee kill yields a random trophy with a paired benefit and penalty: ears trade Toughness for Agility, "
+        "eyes trade Strength for Presence, teeth trade max HP for Armor, noses trade Agility for Toughness, fingers trade Armor for damage, and tongues trade Presence for max HP. "
+        "Discard trophies only while resting. This class can never be Promoted."
+    ),
+}
+
 
 @dataclass(frozen=True)
 class FarewellClass:
@@ -507,6 +630,156 @@ def find_farewell_class(query: str | None) -> FarewellClass | None:
     if not normalized:
         return None
     return next((item for item in CLASSES if normalized in {item.slug.casefold(), item.name.casefold()}), None)
+
+
+def _dice_formula(dice: tuple[int, int, int] | None, *, multiplier: bool = False) -> str:
+    if dice is None:
+        return "None"
+    count, sides, adjustment = dice
+    if count == 0:
+        return "None"
+    base = f"{count if count != 1 else ''}d{sides}"
+    if multiplier:
+        return f"{base} × {adjustment}"
+    return f"{base}{adjustment:+d}" if adjustment else base
+
+
+def format_farewell_class_info(class_template: FarewellClass) -> str:
+    adjustments = [
+        f"{stat.title()} {amount:+d} to the 3d6 roll"
+        for stat, amount in class_template.stat_adjustments.items()
+    ]
+    firearm = class_template.fixed_firearm or (
+        f"roll d{class_template.firearm_die} on Firearms" if class_template.firearm_die else "no starting firearm"
+    )
+    sidearm = (
+        f"roll d{class_template.sidearm_die} on Side Arms" if class_template.sidearm_die else "no starting Side Arm"
+    )
+    armor = f"roll d{class_template.armor_die} on Armor" if class_template.armor_die else "no starting armor"
+    scroll_rule = class_template.war_scrolls
+    if isinstance(scroll_rule, tuple):
+        scrolls = _dice_formula((scroll_rule[0], scroll_rule[1], 0))
+    else:
+        scrolls = str(scroll_rule)
+
+    hp_formula = f"Toughness + d{class_template.hp_die}"
+    if class_template.slug == "altered-mercenary":
+        hp_formula += " + beast number"
+    lines = [
+        f"**{class_template.name}**",
+        (
+            f"HP `{hp_formula}` | Omens `d{class_template.omens_die}` | "
+            f"Silver `{_dice_formula(class_template.silver_dice, multiplier=True)}` | "
+            f"Ammo `{_dice_formula(class_template.ammo)}`"
+        ),
+        "Stat rolls: " + (", ".join(adjustments) if adjustments else "plain 3d6 for every Stat"),
+        f"Starting arms: {firearm}; {sidearm}; {armor}.",
+    ]
+    if class_template.fixed_gear:
+        lines.append("Fixed gear: " + ", ".join(class_template.fixed_gear))
+    if scroll_rule:
+        lines.append(f"Starting War Scrolls: {scrolls}")
+    if class_template.notes:
+        lines.append(f"Class rules: {class_template.notes}")
+    if class_template.slug in CLASS_EXTRA_REFERENCE:
+        lines.append("Additional rules: " + CLASS_EXTRA_REFERENCE[class_template.slug])
+    if class_template.histories:
+        lines.append("Background table: " + " | ".join(class_template.histories))
+    if class_template.specialties:
+        lines.append("Specialties:")
+        lines.extend(f"- {specialty}" for specialty in class_template.specialties)
+    return "\n".join(lines)
+
+
+def farewell_character_info_choices(character: FarewellCharacter) -> list[tuple[str, str]]:
+    choices = [
+        (f"Class: {character.class_name}", "class"),
+        ("Combat basics", "combat"),
+        ("Weapon keywords", "weapon_keywords"),
+        ("Cover", "cover"),
+        ("Rest and recovery", "rest"),
+        ("Stats and tests", "stats"),
+        ("HP and Downed", "hp"),
+        ("Omens", "omens"),
+        ("Ammo", "ammo"),
+        ("Powers and War Scroll use", "powers"),
+        (f"SHOCK ({character.shock})", "shock"),
+        (f"Firearm: {character.firearm}", "firearm"),
+        (f"Side Arm: {character.sidearm}", "sidearm"),
+        (f"Armor: {character.armor}", "armor"),
+        ("Reason for Enlistment", "reason"),
+        ("Battle Scar", "battle_scar"),
+        ("Vice", "vice"),
+    ]
+    if character.specialty:
+        choices.insert(1, (f"Specialty: {character.specialty.split(' — ', 1)[0]}", "specialty"))
+    choices.extend(
+        (f"War Scroll: {scroll}", f"scroll:{index}")
+        for index, scroll in enumerate(character.war_scrolls)
+    )
+    choices.extend(
+        (f"SHIT #{index + 1}: {item}", f"gear:{index}")
+        for index, item in enumerate(character.gear)
+    )
+    return choices
+
+
+def explain_farewell_character(character: FarewellCharacter, subject: str) -> str:
+    normalized = subject.casefold().strip()
+    if normalized == "class":
+        class_template = CLASS_BY_SLUG.get(character.class_slug)
+        if class_template is None:
+            raise ValueError("This grvnt's class is not in the Farewell reference catalog.")
+        return format_farewell_class_info(class_template)
+    if normalized == "specialty":
+        if not character.specialty:
+            raise ValueError("This grvnt has no recorded specialty.")
+        content = f"**Class Specialty**\n{escape_discord_text(character.specialty)}"
+        if character.class_slug in CLASS_EXTRA_REFERENCE:
+            content += "\n\n" + CLASS_EXTRA_REFERENCE[character.class_slug]
+        return content
+    if normalized in {"combat", "weapon_keywords", "cover", "rest", "stats", "hp", "omens", "ammo", "powers"}:
+        return f"**{normalized.replace('_', ' ').title()}**\n{FAREWELL_RULE_REFERENCE[normalized]}"
+    if normalized == "shock":
+        if character.shock <= 0:
+            current_effect = "Current effect: none."
+        else:
+            effect = SHOCK_EFFECTS[min(character.shock, len(SHOCK_EFFECTS)) - 1]
+            current_effect = f"Current effect at SHOCK {character.shock}: {effect}"
+        return f"**SHOCK**\n{FAREWELL_RULE_REFERENCE['shock']}\n{current_effect}"
+    if normalized in {"firearm", "sidearm", "armor"}:
+        value = getattr(character, normalized)
+        content = (
+            f"**{normalized.title()}: {escape_discord_text(value)}**\n"
+            f"{FAREWELL_RULE_REFERENCE[normalized]}"
+        )
+        if normalized in {"firearm", "sidearm"} and any(
+            keyword in value.upper() for keyword in ("SCOPED", "BLAST", "IMPACT", "HEAVY", "SHOCK", "BURN")
+        ):
+            content += "\n\n" + FAREWELL_RULE_REFERENCE["weapon_keywords"]
+        return content
+    if normalized in {"reason", "battle_scar", "vice"}:
+        value = getattr(character, normalized)
+        return (
+            f"**{normalized.replace('_', ' ').title()}**\n{escape_discord_text(value)}\n"
+            f"{FAREWELL_RULE_REFERENCE[normalized]}"
+        )
+    if normalized.startswith("scroll:"):
+        try:
+            index = int(normalized.split(":", 1)[1])
+            scroll = character.war_scrolls[index]
+        except (ValueError, IndexError) as error:
+            raise ValueError("That War Scroll is not recorded on the active grvnt.") from error
+        detail = WAR_SCROLL_DETAILS.get(scroll, "No additional reference summary is available.")
+        return f"**War Scroll: {escape_discord_text(scroll)}**\n{detail}\n\n{FAREWELL_RULE_REFERENCE['powers']}"
+    if normalized.startswith("gear:"):
+        try:
+            index = int(normalized.split(":", 1)[1])
+            item = character.gear[index]
+        except (ValueError, IndexError) as error:
+            raise ValueError("That item is not recorded on the active grvnt.") from error
+        return f"**SHIT #{index + 1}: {escape_discord_text(item)}**\n{FAREWELL_RULE_REFERENCE['gear']}"
+    raise ValueError("Choose a subject from autocomplete so I can find the matching reference.")
 
 
 def _roll_war_scroll_count(rule: int | tuple[int, int]) -> int:

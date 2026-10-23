@@ -11,7 +11,7 @@ The two game systems are integrated into the same bot but use separate rosters. 
 ### MÖRK BORG
 
 - Create characters manually with guided Discord fields.
-- Generate ready-to-play characters with `/scvmbirth`.
+- Generate ready-to-play characters with `/mork scvmbirth`.
 - Choose from stored core, supplemental, and server-homebrew classes.
 - Track abilities, HP, Omens, silver, equipment, notes, and class features.
 - Maintain multiple characters with a different active character in each server.
@@ -21,7 +21,7 @@ The two game systems are integrated into the same bot but use separate rosters. 
 
 ### Farewell to Arms REDUX
 
-- Generate a complete grvnt with `/farewell enlist`.
+- Generate a complete grvnt with `/arms enlist`.
 - Roll from all 12 entry-level REDUX classes or select a specific class.
 - Generate class-adjusted stats, HP, Omens, silver, Ammo, Powers, and starting SHOCK.
 - Generate firearms, side arms, armor, SHIT, War Scrolls, nicknames, battle scars, vices, enlistment reasons, histories, and class specialties.
@@ -98,17 +98,17 @@ Do not commit `.env`; it is ignored by Git. Use `.env.example` as the safe confi
 For a MÖRK BORG character:
 
 ```text
-/scvmbirth
-/sheet
-/roll target:strength dr:12
+/mork scvmbirth
+/mork sheet
+/mork roll target:strength dr:12
 ```
 
 For a Farewell to Arms REDUX grvnt:
 
 ```text
-/farewell enlist
-/farewell sheet
-/farewell roll target:presence dr:12
+/arms enlist
+/arms sheet
+/arms roll target:presence dr:12
 ```
 
 Both generators accept the relevant optional selections through Discord's native command interface. A newly generated character automatically becomes active in the server where it was created.
@@ -121,65 +121,69 @@ Both generators accept the relevant optional selections through Discord's native
 | --- | --- |
 | `/ping` | Check whether the bot is responding. |
 | `/helpmb` | Show concise in-Discord command help. |
-| `/roll` | Roll dice notation such as `2d6+1`, or test an active MÖRK BORG ability. |
+
+MÖRK BORG commands are grouped under `/mork`; Farewell to Arms REDUX commands are grouped under `/arms`. This keeps each character roster and ruleset visibly separate in Discord's command picker.
 
 ### MÖRK BORG characters
 
 | Command | Description |
 | --- | --- |
-| `/create` | Manually create or import a character. |
-| `/scvmbirth` | Generate a complete random character, optionally from a selected class. |
-| `/characters` | List your saved roster. |
-| `/character-switch` | Select the active character for the current server. |
-| `/character-archive` | Mark a character active, archived, dead, or NPC. |
-| `/character-delete` | Permanently delete one of your characters. |
-| `/sheet` | Display the active character sheet. |
-| `/export` | Download the active character sheet. |
-| `/classes` | List available class templates. |
-| `/classinfo` | Inspect a stored class and its features. |
-| `/omens` | View, reroll, or set current Omens. |
-| `/gettingbetter` | Apply automatic or manual post-session stat changes. |
-| `/setstat` | Set an ability modifier. |
-| `/setfield` | Update a general character field. |
-| `/improve` | Increase or decrease a numeric character value. |
-| `/additem`, `/removeitem` | Manage equipment. |
-| `/notes`, `/addnote`, `/editnote`, `/removenote` | Manage character notes. |
+| `/mork create` | Manually create or import a character. |
+| `/mork scvmbirth` | Generate a complete random character, optionally from a selected class. |
+| `/mork roster` | List your saved roster. |
+| `/mork switch` | Select the active character for the current server. |
+| `/mork archive` | Mark a character active, archived, dead, or NPC. |
+| `/mork delete` | Permanently delete one of your characters. |
+| `/mork sheet` | Display the active character sheet. |
+| `/mork export` | Download the active character sheet. |
+| `/mork classes` | List available class templates. |
+| `/mork class-info` | Inspect a stored class and its features. |
+| `/mork roll` | Roll dice notation such as `2d6+1`, or test the active character's ability. |
+| `/mork omens` | View, reroll, or set current Omens. |
+| `/mork getting-better` | Apply automatic or manual post-session stat changes. |
+| `/mork set-stat` | Set an ability modifier. |
+| `/mork set-field` | Update a general character field. |
+| `/mork improve` | Increase or decrease a numeric character value. |
+| `/mork add-item`, `/mork remove-item` | Manage equipment. |
+| `/mork notes`, `/mork add-note`, `/mork edit-note`, `/mork remove-note` | Manage character notes. |
 
-Ability fields use modifiers such as `-1`, `0`, or `+2`, not raw 3d6 totals. Equipment and notes supplied through `/create` accept comma-separated values. When a stored class is selected, Discord autocompletes that class's available features.
+Ability fields use modifiers such as `-1`, `0`, or `+2`, not raw 3d6 totals. Equipment and notes supplied through `/mork create` accept comma-separated values. When a stored class is selected, Discord autocompletes that class's available features.
 
 ### Farewell to Arms REDUX
 
 | Command | Description |
 | --- | --- |
-| `/farewell enlist` | Generate and save a complete grvnt. A class and nickname are optional. |
-| `/farewell classes` | List the 12 available entry-level classes. |
-| `/farewell sheet` | Display the active grvnt. |
-| `/farewell roster` | List your saved grvnts. |
-| `/farewell switch` | Select the active grvnt for the current server. |
-| `/farewell export` | Download the active grvnt sheet. |
-| `/farewell set` | Update a stat, resource, name, weapon, armor, background detail, or specialty on the active grvnt. |
-| `/farewell gear-add` | Add equipment or SHIT to the active grvnt. |
-| `/farewell gear-remove` | Remove equipment by the number displayed on the grvnt sheet. |
-| `/farewell delete` | Permanently delete one of your saved grvnts. |
-| `/farewell roll` | Roll raw dice or test an active grvnt's stat. |
+| `/arms enlist` | Generate and save a complete grvnt. A class and nickname are optional. |
+| `/arms classes` | List the 12 available entry-level classes. |
+| `/arms class-info` | Show generation rules, equipment, restrictions, backgrounds, and specialties for a class. |
+| `/arms info` | Explain a class, trait, weapon, item, War Scroll, resource, or rule from the active grvnt's sheet. |
+| `/arms sheet` | Display the active grvnt. |
+| `/arms roster` | List your saved grvnts. |
+| `/arms switch` | Select the active grvnt for the current server. |
+| `/arms export` | Download the active grvnt sheet. |
+| `/arms set` | Update a stat, resource, name, weapon, armor, background detail, or specialty on the active grvnt. |
+| `/arms gear-add` | Add equipment or SHIT to the active grvnt. |
+| `/arms gear-remove` | Remove equipment by the number displayed on the grvnt sheet. |
+| `/arms delete` | Permanently delete one of your saved grvnts. |
+| `/arms roll` | Roll raw dice or test an active grvnt's stat. |
 
-The generator follows the REDUX enlistment sequence and accounts for class-specific dice, fixed equipment, specialty counts, restrictions, and starting War Scrolls. Generated Discord sheets include the rule text needed to use the selected specialty at the table.
+The generator follows the REDUX enlistment sequence and accounts for class-specific dice, fixed equipment, specialty counts, restrictions, and starting War Scrolls. Generated Discord sheets include the selected specialty's essential rule text. `/arms info` provides deeper, context-sensitive explanations of the active sheet as well as shared rules for combat, cover, recovery, SHOCK, Powers, and weapon keywords.
 
 ### GM and homebrew
 
 | Command | Description |
 | --- | --- |
-| `/gm-characters` | List active MÖRK BORG characters in the current server. |
-| `/gm-party-loot` | Display shared party loot. |
-| `/gm-party-loot-add`, `/gm-party-loot-remove` | Manage shared loot. |
-| `/gm-npcs` | List server NPCs. |
-| `/gm-npc` | Display one NPC. |
-| `/gm-npc-create` | Create a server NPC. |
-| `/gm-classes` | List server homebrew classes. |
-| `/gm-class-create`, `/gm-class-edit`, `/gm-class-delete` | Manage homebrew classes. |
-| `/gm-features` | List reusable homebrew features. |
-| `/gm-feature-create`, `/gm-feature-edit`, `/gm-feature-delete` | Manage reusable features. |
-| `/gm-feature-link` | Attach a reusable feature to a class. |
+| `/mork gm characters` | List active MÖRK BORG characters in the current server. |
+| `/mork gm party-loot` | Display shared party loot. |
+| `/mork gm loot-add`, `/mork gm loot-remove` | Manage shared loot. |
+| `/mork gm npcs` | List server NPCs. |
+| `/mork gm npc` | Display one NPC. |
+| `/mork gm npc-create` | Create a server NPC. |
+| `/mork gm classes` | List server homebrew classes. |
+| `/mork gm class-create`, `/mork gm class-edit`, `/mork gm class-delete` | Manage homebrew classes. |
+| `/mork gm features` | List reusable homebrew features. |
+| `/mork gm feature-create`, `/mork gm feature-edit`, `/mork gm feature-delete` | Manage reusable features. |
+| `/mork gm feature-link` | Attach a reusable feature to a class. |
 
 GM data and permissions are scoped to the Discord server where the command is used. By default, commands require Manage Server permission or a role named `scvm-gm`.
 

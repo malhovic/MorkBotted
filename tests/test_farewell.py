@@ -5,7 +5,10 @@ from pathlib import Path
 from morkbotted.farewell import (
     CLASSES,
     add_farewell_gear,
+    explain_farewell_character,
+    farewell_character_info_choices,
     find_farewell_class,
+    format_farewell_class_info,
     generate_farewell_character,
     remove_farewell_gear,
     update_farewell_field,
@@ -150,6 +153,45 @@ class FarewellCharacterTest(unittest.TestCase):
             update_farewell_field(character, "ammo", "lots")
         with self.assertRaisesRegex(ValueError, "Unknown field"):
             update_farewell_field(character, "class_name", "Cheater")
+
+    def test_class_reference_includes_generation_rules_and_every_specialty(self) -> None:
+        class_template = find_farewell_class("Expendable Sapper")
+        reference = format_farewell_class_info(class_template)
+
+        self.assertIn("HP `Toughness + d6`", reference)
+        self.assertIn("Silver `d6 × 10`", reference)
+        self.assertIn("Agility +2 to the 3d6 roll", reference)
+        self.assertIn("roll d3 on Side Arms", reference)
+        for specialty in class_template.specialties:
+            self.assertIn(specialty, reference)
+
+        altered_reference = format_farewell_class_info(find_farewell_class("Altered Mercenary"))
+        embedded_reference = format_farewell_class_info(find_farewell_class("Embedded One"))
+        self.assertIn("Toughness + d8 + beast number", altered_reference)
+        self.assertIn("cannot use firearms or armor of Tier 2", altered_reference)
+        self.assertIn("Once per day, summon the chosen Ether", embedded_reference)
+
+    def test_active_character_reference_explains_sheet_entries(self) -> None:
+        character = generate_farewell_character(
+            user_id=1, discord_name="Tester", class_template=find_farewell_class("Cynically Cursed Chaplain")
+        )
+        character.war_scrolls = ["Trenchfoot"]
+        character.firearm = "Boom Lance (d10, BLAST 2, HEAVY)"
+
+        choices = dict((value, label) for label, value in farewell_character_info_choices(character))
+        self.assertIn("class", choices)
+        self.assertIn("specialty", choices)
+        self.assertIn("scroll:0", choices)
+        self.assertIn("gear:0", choices)
+        self.assertIn("weapon_keywords", choices)
+
+        self.assertIn("Strength DR12", explain_farewell_character(character, "scroll:0"))
+        self.assertIn("BLAST (X)", explain_farewell_character(character, "firearm"))
+        self.assertIn("Specialties:", explain_farewell_character(character, "class"))
+        self.assertIn(f"SHOCK {character.shock}", explain_farewell_character(character, "shock"))
+
+        with self.assertRaisesRegex(ValueError, "not recorded"):
+            explain_farewell_character(character, "scroll:99")
 
 
 if __name__ == "__main__":

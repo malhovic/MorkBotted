@@ -25,7 +25,10 @@ from morkbotted.farewell import FAREWELL_EDITABLE_FIELDS
 from morkbotted.farewell import STAT_NAMES as FAREWELL_STAT_NAMES
 from morkbotted.farewell import (
     add_farewell_gear,
+    explain_farewell_character,
+    farewell_character_info_choices,
     find_farewell_class,
+    format_farewell_class_info,
     generate_farewell_character,
     remove_farewell_gear,
     update_farewell_field,
@@ -204,7 +207,7 @@ def apply_omen_action(character: Character, action: str, amount: int | None = No
 
     if normalized in {"set", "record"}:
         if amount is None:
-            raise ValueError("Give the number of omens to record, like `/omens set 2`.")
+            raise ValueError("Give the number of omens to record, like `/mork omens set 2`.")
         if amount < 0:
             raise ValueError("Omens cannot be below 0.")
         character.omens = amount
@@ -324,10 +327,19 @@ def build_bot() -> commands.Bot:
     farewell_store = FarewellCharacterStore(db_path)
     slash_synced = False
 
-    farewell_group = app_commands.Group(
-        name="farewell",
+    arms_group = app_commands.Group(
+        name="arms",
         description="Farewell to Arms REDUX character tools.",
     )
+    mork_group = app_commands.Group(
+        name="mork",
+        description="MÖRK BORG character and play tools.",
+    )
+    mork_gm_group = app_commands.Group(
+        name="gm",
+        description="MÖRK BORG GM and homebrew tools.",
+    )
+    mork_group.add_command(mork_gm_group)
 
     async def class_name_autocomplete(
         interaction: discord.Interaction,
@@ -531,6 +543,22 @@ def build_bot() -> commands.Bot:
             if not current_lower or current_lower in field_name.replace("_", " ")
         ][:25]
 
+    async def farewell_info_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        character = farewell_store.get_active(interaction.guild_id, interaction.user.id)
+        if character is None:
+            return []
+        current_lower = current.casefold().strip()
+        choices = []
+        for label, value in farewell_character_info_choices(character):
+            searchable = f"{label} {value}".casefold()
+            if current_lower and current_lower not in searchable:
+                continue
+            choices.append(app_commands.Choice(name=label[:100], value=value[:100]))
+        return choices[:25]
+
     @bot.event
     async def on_ready() -> None:
         nonlocal slash_synced
@@ -554,31 +582,23 @@ def build_bot() -> commands.Bot:
     async def slash_helpmb(interaction: discord.Interaction) -> None:
         lines = [
             "MorkBotted uses slash commands only.",
-            "`/create` build or import a character with helper fields",
-            "`/scvmbirth` generate a ready-to-play random character",
-            "`/farewell enlist` generate a separate Farewell to Arms REDUX grvnt",
-            "`/farewell sheet`, `/farewell roster`, `/farewell switch`, `/farewell set`, and `/farewell delete` manage that roster",
-            "`/characters` list your roster",
-            "`/character-switch` set the active character for this server",
-            "`/character-archive` mark a character archived, dead, npc, or active",
-            "`/gettingbetter` update stats with typed options",
-            "`/omens` show, roll, or record your current daily Omens",
-            "`/classes` list stored classes",
-            "`/classinfo` inspect one stored class",
-            "`/sheet` show your character",
-            "`/export` download your character sheet",
-            "`/roll` roll dice or roll one of your active character's abilities",
-            "`/setstat`, `/setfield`, and `/improve` update saved character values",
-            "`/additem` and `/removeitem` manage equipment",
-            "`/notes`, `/addnote`, `/editnote`, and `/removenote` manage notes",
-            "`/gm-characters` show the current active party for this server",
-            "`/gm-party-loot` track shared loot for this server",
-            "`/gm-npcs` track NPCs for this server",
-            "`/gm-classes` and `/gm-features` manage server homebrew",
+            "**MORK BORG — `/mork`**",
+            "`/mork create` build or import a character with helper fields",
+            "`/mork scvmbirth` generate a ready-to-play random character",
+            "`/mork sheet`, `/mork roster`, `/mork switch`, `/mork archive`, and `/mork delete` manage that roster",
+            "`/mork class-info` explains a stored class; `/mork classes` lists them",
+            "`/mork roll` rolls dice or tests an active character's ability",
+            "`/mork omens` and `/mork getting-better` handle survival and advancement",
+            "`/mork gm` contains server party, NPC, loot, and homebrew tools",
+            "",
+            "**Farewell to Arms REDUX — `/arms`**",
+            "`/arms enlist` generate a separate Farewell to Arms REDUX grvnt",
+            "`/arms class-info` explains a class; `/arms info` explains anything on your active sheet",
+            "`/arms sheet`, `/arms roster`, `/arms switch`, `/arms set`, and `/arms delete` manage that roster",
         ]
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
-    @bot.tree.command(name="classes", description="List the class templates stored in the bot database.")
+    @mork_group.command(name="classes", description="List the class templates stored in the bot database.")
     async def slash_classes(interaction: discord.Interaction) -> None:
         class_names = [class_template.name for class_template in store.list_classes(interaction.guild_id)]
         await interaction.response.send_message(
@@ -586,24 +606,24 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="classinfo", description="Show details for one stored class.")
+    @mork_group.command(name="class-info", description="Show details for one stored class.")
     @app_commands.describe(class_name="Stored class name")
     @app_commands.autocomplete(class_name=class_name_autocomplete)
     async def slash_classinfo(interaction: discord.Interaction, class_name: str) -> None:
         class_template = store.find_class(class_name, interaction.guild_id)
         if class_template is None:
             await interaction.response.send_message(
-                f"No stored class named `{escape_discord_text(class_name)}`. Try `/classes` first.",
+                f"No stored class named `{escape_discord_text(class_name)}`. Try `/mork classes` first.",
                 ephemeral=True,
             )
             return
         await interaction.response.send_message(build_class_summary(class_template), ephemeral=True)
 
-    @bot.tree.command(name="characters", description="List your saved characters and their status.")
+    @mork_group.command(name="roster", description="List your saved characters and their status.")
     async def slash_characters(interaction: discord.Interaction) -> None:
         characters = store.list_characters(interaction.user.id, include_archived=True)
         if not characters:
-            await interaction.response.send_message("You do not have any saved characters yet. Start with `/create`.", ephemeral=True)
+            await interaction.response.send_message("You do not have any saved characters yet. Start with `/mork create`.", ephemeral=True)
             return
         active_id = None
         if interaction.guild_id is not None:
@@ -618,7 +638,7 @@ def build_bot() -> commands.Bot:
             )
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
-    @bot.tree.command(name="character-switch", description="Set your active character for this server.")
+    @mork_group.command(name="switch", description="Set your active character for this server.")
     @app_commands.describe(character="Character name or id")
     @app_commands.autocomplete(character=character_name_autocomplete)
     async def slash_character_switch(interaction: discord.Interaction, character: str) -> None:
@@ -638,7 +658,7 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="character-archive", description="Mark one of your characters as archived, dead, or NPC.")
+    @mork_group.command(name="archive", description="Mark one of your characters as archived, dead, or NPC.")
     @app_commands.describe(character="Character name or id", status="New stored status")
     @app_commands.autocomplete(character=character_name_autocomplete)
     @app_commands.choices(
@@ -675,7 +695,7 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="character-delete", description="Permanently delete one of your saved characters.")
+    @mork_group.command(name="delete", description="Permanently delete one of your saved characters.")
     @app_commands.describe(character="Character name or id")
     @app_commands.autocomplete(character=character_name_autocomplete)
     async def slash_character_delete(interaction: discord.Interaction, character: str) -> None:
@@ -692,7 +712,7 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="gm-characters", description="GM: List active characters for this server only.")
+    @mork_gm_group.command(name="characters", description="List active characters for this server only.")
     @app_commands.guild_only()
     async def slash_gm_characters(interaction: discord.Interaction) -> None:
         if not await require_gm_access(interaction, gm_role_name):
@@ -706,7 +726,7 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="gm-party-loot", description="GM: List party loot for this server.")
+    @mork_gm_group.command(name="party-loot", description="List party loot for this server.")
     @app_commands.guild_only()
     async def slash_gm_party_loot(interaction: discord.Interaction) -> None:
         if not await require_gm_access(interaction, gm_role_name):
@@ -722,7 +742,7 @@ def build_bot() -> commands.Bot:
             filename="party_loot.txt",
         )
 
-    @bot.tree.command(name="gm-party-loot-add", description="GM: Add shared party loot for this server.")
+    @mork_gm_group.command(name="loot-add", description="Add shared party loot for this server.")
     @app_commands.guild_only()
     @app_commands.describe(item="Loot item", quantity="How many", notes="Optional GM-facing notes")
     async def slash_gm_party_loot_add(
@@ -749,9 +769,9 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="gm-party-loot-remove", description="GM: Remove shared party loot by id.")
+    @mork_gm_group.command(name="loot-remove", description="Remove shared party loot by id.")
     @app_commands.guild_only()
-    @app_commands.describe(loot_id="Loot id from `/gm-party-loot`")
+    @app_commands.describe(loot_id="Loot id from `/mork gm party-loot`")
     async def slash_gm_party_loot_remove(interaction: discord.Interaction, loot_id: int) -> None:
         if not await require_gm_access(interaction, gm_role_name):
             return
@@ -768,7 +788,7 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="gm-npcs", description="GM: List NPCs for this server.")
+    @mork_gm_group.command(name="npcs", description="List NPCs for this server.")
     @app_commands.guild_only()
     async def slash_gm_npcs(interaction: discord.Interaction) -> None:
         if not await require_gm_access(interaction, gm_role_name):
@@ -784,9 +804,9 @@ def build_bot() -> commands.Bot:
             filename="npcs.txt",
         )
 
-    @bot.tree.command(name="gm-npc", description="GM: Show one NPC for this server.")
+    @mork_gm_group.command(name="npc", description="Show one NPC for this server.")
     @app_commands.guild_only()
-    @app_commands.describe(npc_id="NPC id from `/gm-npcs`")
+    @app_commands.describe(npc_id="NPC id from `/mork gm npcs`")
     async def slash_gm_npc(interaction: discord.Interaction, npc_id: int) -> None:
         if not await require_gm_access(interaction, gm_role_name):
             return
@@ -800,7 +820,7 @@ def build_bot() -> commands.Bot:
             return
         await interaction.response.send_message(format_npc_detail(npc), ephemeral=True)
 
-    @bot.tree.command(name="gm-npc-create", description="GM: Create an NPC for this server.")
+    @mork_gm_group.command(name="npc-create", description="Create an NPC for this server.")
     @app_commands.guild_only()
     @app_commands.describe(
         name="NPC name",
@@ -837,7 +857,7 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="gm-classes", description="GM: List this server's homebrew classes.")
+    @mork_gm_group.command(name="classes", description="List this server's homebrew classes.")
     @app_commands.guild_only()
     async def slash_gm_classes(interaction: discord.Interaction) -> None:
         if not await require_gm_access(interaction, gm_role_name):
@@ -857,7 +877,7 @@ def build_bot() -> commands.Bot:
             lines.append(f"- #{class_template.id} **{escape_discord_text(class_template.name)}**{feature_text}")
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
-    @bot.tree.command(name="gm-class-create", description="GM: Create a server homebrew class.")
+    @mork_gm_group.command(name="class-create", description="Create a server homebrew class.")
     @app_commands.guild_only()
     @app_commands.describe(
         name="The class name players will pick, such as Grave Botanist",
@@ -906,7 +926,7 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="gm-class-edit", description="GM: Edit one server homebrew class.")
+    @mork_gm_group.command(name="class-edit", description="Edit one server homebrew class.")
     @app_commands.guild_only()
     @app_commands.describe(
         class_name="Pick the homebrew class to change",
@@ -959,7 +979,7 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="gm-class-delete", description="GM: Delete one server homebrew class.")
+    @mork_gm_group.command(name="class-delete", description="Delete one server homebrew class.")
     @app_commands.guild_only()
     @app_commands.describe(class_name="Pick the homebrew class to delete")
     @app_commands.autocomplete(class_name=homebrew_class_autocomplete)
@@ -979,7 +999,7 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="gm-feature-create", description="GM: Create a reusable server homebrew class feature.")
+    @mork_gm_group.command(name="feature-create", description="Create a reusable server homebrew class feature.")
     @app_commands.guild_only()
     @app_commands.describe(
         name="Feature name players will see, such as Rootbound",
@@ -1012,11 +1032,11 @@ def build_bot() -> commands.Bot:
             await interaction.response.send_message(str(error), ephemeral=True)
             return
         await interaction.response.send_message(
-            f"Created server feature #{feature.id}: **{escape_discord_text(feature.name)}**. Link it with `/gm-feature-link`.",
+            f"Created server feature #{feature.id}: **{escape_discord_text(feature.name)}**. Link it with `/mork gm feature-link`.",
             ephemeral=True,
         )
 
-    @bot.tree.command(name="gm-feature-edit", description="GM: Edit one reusable server feature.")
+    @mork_gm_group.command(name="feature-edit", description="Edit one reusable server feature.")
     @app_commands.guild_only()
     @app_commands.describe(
         feature="Pick the reusable feature to change",
@@ -1057,7 +1077,7 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="gm-feature-delete", description="GM: Delete one reusable server feature.")
+    @mork_gm_group.command(name="feature-delete", description="Delete one reusable server feature.")
     @app_commands.guild_only()
     @app_commands.describe(feature="Pick the reusable feature to delete")
     @app_commands.autocomplete(feature=homebrew_feature_autocomplete)
@@ -1077,7 +1097,7 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="gm-features", description="GM: List reusable homebrew features for this server.")
+    @mork_gm_group.command(name="features", description="List reusable homebrew features for this server.")
     @app_commands.guild_only()
     async def slash_gm_features(interaction: discord.Interaction) -> None:
         if not await require_gm_access(interaction, gm_role_name):
@@ -1099,7 +1119,7 @@ def build_bot() -> commands.Bot:
             )
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
-    @bot.tree.command(name="gm-feature-link", description="GM: Attach a reusable server feature to a class.")
+    @mork_gm_group.command(name="feature-link", description="Attach a reusable server feature to a class.")
     @app_commands.guild_only()
     @app_commands.describe(
         feature="Pick the reusable feature to add to a class",
@@ -1123,7 +1143,7 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="scvmbirth", description="Generate a ready-to-play random character.")
+    @mork_group.command(name="scvmbirth", description="Generate a ready-to-play random character.")
     @app_commands.describe(class_name="Optional class to force instead of rolling from the catalog")
     @app_commands.autocomplete(class_name=class_name_autocomplete)
     async def slash_scvmbirth(interaction: discord.Interaction, class_name: str | None = None) -> None:
@@ -1132,7 +1152,7 @@ def build_bot() -> commands.Bot:
             class_template = store.find_class(class_name, interaction.guild_id)
             if class_template is None:
                 await interaction.followup.send(
-                    f"No stored class named `{escape_discord_text(class_name)}`. Try `/classes` first.",
+                    f"No stored class named `{escape_discord_text(class_name)}`. Try `/mork classes` first.",
                     ephemeral=True,
                 )
                 return
@@ -1161,19 +1181,19 @@ def build_bot() -> commands.Bot:
             filename="scvmbirth.txt",
         )
 
-    @bot.tree.command(name="sheet", description="Show your saved character sheet.")
+    @mork_group.command(name="sheet", description="Show your saved character sheet.")
     async def slash_sheet(interaction: discord.Interaction) -> None:
         character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/mork create` or `/mork switch`.", ephemeral=True)
             return
         await interaction.response.send_message(build_character_sheet(character), ephemeral=True)
 
-    @bot.tree.command(name="export", description="Export your saved character sheet as a text file.")
+    @mork_group.command(name="export", description="Export your saved character sheet as a text file.")
     async def slash_export(interaction: discord.Interaction) -> None:
         character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/mork create` or `/mork switch`.", ephemeral=True)
             return
         payload = BytesIO(character.export_text().encode("utf-8"))
         await interaction.response.send_message(
@@ -1182,14 +1202,14 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="roll", description="Roll dice or roll one of your character abilities.")
+    @mork_group.command(name="roll", description="Roll dice or roll one of your character abilities.")
     @app_commands.describe(target="Dice expression like 2d6+1 or an ability like presence", dr="Difficulty rating")
     async def slash_roll(interaction: discord.Interaction, target: str, dr: int = DEFAULT_DR) -> None:
         lowered = target.lower().strip()
         if lowered in ABILITY_NAMES or lowered in ABILITY_ALIAS_SET:
             character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
             if character is None:
-                await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
+                await interaction.response.send_message("No active character found here. Use `/mork create` or `/mork switch`.", ephemeral=True)
                 return
             ability_name = normalize_ability_name(lowered)
             modifier = character.get_ability(ability_name)
@@ -1210,7 +1230,7 @@ def build_bot() -> commands.Bot:
         modifier_text = f" {modifier:+d}" if modifier else ""
         await interaction.response.send_message(f"Rolled `{target}` -> {rolls}{modifier_text} = **{total}**")
 
-    @bot.tree.command(name="create", description="Create a new character and make it active in this server.")
+    @mork_group.command(name="create", description="Create a new character and make it active in this server.")
     @app_commands.describe(
         name="Character name",
         class_name="Stored class name or custom class label",
@@ -1287,13 +1307,13 @@ def build_bot() -> commands.Bot:
             store.set_active_character(interaction.guild_id, interaction.user.id, character.id)
         await interaction.response.send_message(f"Character saved.\n{build_character_sheet(character)}", ephemeral=True)
 
-    @bot.tree.command(name="setstat", description="Set one of your ability modifiers.")
+    @mork_group.command(name="set-stat", description="Set one of your ability modifiers.")
     @app_commands.describe(ability="Ability name", value="Modifier like -1, 0, or +2")
     @app_commands.autocomplete(ability=ability_autocomplete, value=modifier_autocomplete)
     async def slash_setstat(interaction: discord.Interaction, ability: str, value: str) -> None:
         character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/mork create` or `/mork switch`.", ephemeral=True)
             return
         try:
             normalized = normalize_ability_name(ability)
@@ -1309,7 +1329,7 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="omens", description="Show, roll, or record your current daily Omens.")
+    @mork_group.command(name="omens", description="Show, roll, or record your current daily Omens.")
     @app_commands.describe(action="Show current omens, roll today's omens, or record a manual count", amount="Required when action is set")
     @app_commands.choices(
         action=[
@@ -1321,7 +1341,7 @@ def build_bot() -> commands.Bot:
     async def slash_omens(interaction: discord.Interaction, action: str = "status", amount: int | None = None) -> None:
         character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/mork create` or `/mork switch`.", ephemeral=True)
             return
 
         try:
@@ -1335,13 +1355,13 @@ def build_bot() -> commands.Bot:
             store.upsert(character)
         await interaction.response.send_message(message, ephemeral=True)
 
-    @bot.tree.command(name="setfield", description="Update one saved character field.")
+    @mork_group.command(name="set-field", description="Update one saved character field.")
     @app_commands.describe(field_name="Field such as hp, background, or class_name", value="New value")
     @app_commands.autocomplete(field_name=editable_field_autocomplete)
     async def slash_setfield(interaction: discord.Interaction, field_name: str, value: str) -> None:
         character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/mork create` or `/mork switch`.", ephemeral=True)
             return
         normalized = field_name.lower().strip()
         if normalized not in EDITABLE_FIELDS:
@@ -1370,13 +1390,13 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="improve", description="Adjust a saved stat or tracked field by a delta.")
+    @mork_group.command(name="improve", description="Adjust a saved stat or tracked field by a delta.")
     @app_commands.describe(field_name="Ability, hp, max_hp, omens, or silver", delta="Adjustment like +1 or -2")
     @app_commands.autocomplete(field_name=improvable_field_autocomplete)
     async def slash_improve(interaction: discord.Interaction, field_name: str, delta: str) -> None:
         character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/mork create` or `/mork switch`.", ephemeral=True)
             return
         normalized = field_name.lower().strip()
         try:
@@ -1405,11 +1425,11 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="additem", description="Add one item to your equipment list.")
+    @mork_group.command(name="add-item", description="Add one item to your equipment list.")
     async def slash_additem(interaction: discord.Interaction, item: str) -> None:
         character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/mork create` or `/mork switch`.", ephemeral=True)
             return
         character.discord_name = interaction.user.display_name
         if len(character.equipment) >= MAX_EQUIPMENT_ITEMS:
@@ -1430,11 +1450,11 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="removeitem", description="Remove one item from your equipment list.")
+    @mork_group.command(name="remove-item", description="Remove one item from your equipment list.")
     async def slash_removeitem(interaction: discord.Interaction, item: str) -> None:
         character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/mork create` or `/mork switch`.", ephemeral=True)
             return
         target = item.strip()
         try:
@@ -1451,11 +1471,11 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="addnote", description="Add one note to your character.")
+    @mork_group.command(name="add-note", description="Add one note to your character.")
     async def slash_addnote(interaction: discord.Interaction, note: str) -> None:
         character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/mork create` or `/mork switch`.", ephemeral=True)
             return
         try:
             add_character_note(character, note)
@@ -1469,23 +1489,23 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="notes", description="List your character notes with note numbers.")
+    @mork_group.command(name="notes", description="List your character notes with note numbers.")
     async def slash_notes(interaction: discord.Interaction) -> None:
         character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/mork create` or `/mork switch`.", ephemeral=True)
             return
         await interaction.response.send_message(
             f"Notes for **{escape_discord_text(character.name)}**:\n{format_notes(character)}",
             ephemeral=True,
         )
 
-    @bot.tree.command(name="editnote", description="Replace one numbered character note.")
-    @app_commands.describe(note_number="Number from `/notes`", note="Replacement note text")
+    @mork_group.command(name="edit-note", description="Replace one numbered character note.")
+    @app_commands.describe(note_number="Number from `/mork notes`", note="Replacement note text")
     async def slash_editnote(interaction: discord.Interaction, note_number: int, note: str) -> None:
         character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/mork create` or `/mork switch`.", ephemeral=True)
             return
         try:
             update_character_note(character, note_number, note)
@@ -1499,12 +1519,12 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="removenote", description="Remove one numbered character note.")
-    @app_commands.describe(note_number="Number from `/notes`")
+    @mork_group.command(name="remove-note", description="Remove one numbered character note.")
+    @app_commands.describe(note_number="Number from `/mork notes`")
     async def slash_removenote(interaction: discord.Interaction, note_number: int) -> None:
         character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/mork create` or `/mork switch`.", ephemeral=True)
             return
         try:
             removed_note = remove_character_note(character, note_number)
@@ -1519,7 +1539,7 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @bot.tree.command(name="gettingbetter", description="Apply post-session stat changes.")
+    @mork_group.command(name="getting-better", description="Apply post-session stat changes.")
     @app_commands.describe(
         mode="Automatic rolls or manual stat choices",
         agility="Manual Agility result",
@@ -1563,7 +1583,7 @@ def build_bot() -> commands.Bot:
     ) -> None:
         character = get_active_character_for_context(store, interaction.user, interaction.guild_id)
         if character is None:
-            await interaction.response.send_message("No active character found here. Use `/create` or `/character-switch`.", ephemeral=True)
+            await interaction.response.send_message("No active character found here. Use `/mork create` or `/mork switch`.", ephemeral=True)
             return
 
         manual_choices = None
@@ -1586,7 +1606,7 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @farewell_group.command(name="enlist", description="Generate and save a complete Farewell to Arms grvnt.")
+    @arms_group.command(name="enlist", description="Generate and save a complete Farewell to Arms grvnt.")
     @app_commands.describe(
         class_name="Optional class; leave blank to roll one of all 12 classes",
         name="Optional nickname; leave blank to roll on the nickname table",
@@ -1600,7 +1620,7 @@ def build_bot() -> commands.Bot:
         class_template = find_farewell_class(class_name)
         if class_name and class_template is None:
             await interaction.response.send_message(
-                f"No Farewell to Arms class named `{escape_discord_text(class_name)}`. Try `/farewell classes`.",
+                f"No Farewell to Arms class named `{escape_discord_text(class_name)}`. Try `/arms classes`.",
                 ephemeral=True,
             )
             return
@@ -1620,19 +1640,59 @@ def build_bot() -> commands.Bot:
             filename="farewell_grvnt.txt",
         )
 
-    @farewell_group.command(name="classes", description="List the 12 Farewell to Arms REDUX classes.")
+    @arms_group.command(name="classes", description="List the 12 Farewell to Arms REDUX classes.")
     async def farewell_classes(interaction: discord.Interaction) -> None:
         await interaction.response.send_message(
             "Farewell to Arms REDUX classes:\n" + "\n".join(f"- {item.name}" for item in FAREWELL_CLASSES),
             ephemeral=True,
         )
 
-    @farewell_group.command(name="sheet", description="Show your active Farewell to Arms grvnt.")
+    @arms_group.command(name="class-info", description="Show enlistment rules and specialties for one class.")
+    @app_commands.describe(class_name="Farewell to Arms class")
+    @app_commands.autocomplete(class_name=farewell_class_autocomplete)
+    async def farewell_class_info(interaction: discord.Interaction, class_name: str) -> None:
+        class_template = find_farewell_class(class_name)
+        if class_template is None:
+            await interaction.response.send_message(
+                f"No Farewell to Arms class named `{escape_discord_text(class_name)}`. Try `/arms classes`.",
+                ephemeral=True,
+            )
+            return
+        await send_interaction_text(
+            interaction,
+            format_farewell_class_info(class_template),
+            ephemeral=True,
+            filename=f"{class_template.slug}-reference.txt",
+        )
+
+    @arms_group.command(name="info", description="Explain a class, item, rule, or trait on your active grvnt.")
+    @app_commands.describe(subject="Part of the active character sheet to explain")
+    @app_commands.autocomplete(subject=farewell_info_autocomplete)
+    async def farewell_info(interaction: discord.Interaction, subject: str) -> None:
+        character = farewell_store.get_active(interaction.guild_id, interaction.user.id)
+        if character is None:
+            await interaction.response.send_message(
+                "No Farewell to Arms grvnt found here. Start with `/arms enlist`.", ephemeral=True
+            )
+            return
+        try:
+            content = explain_farewell_character(character, subject)
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        await send_interaction_text(
+            interaction,
+            content,
+            ephemeral=True,
+            filename=f"farewell-reference-{character.id}.txt",
+        )
+
+    @arms_group.command(name="sheet", description="Show your active Farewell to Arms grvnt.")
     async def farewell_sheet(interaction: discord.Interaction) -> None:
         character = farewell_store.get_active(interaction.guild_id, interaction.user.id)
         if character is None:
             await interaction.response.send_message(
-                "No Farewell to Arms grvnt found here. Start with `/farewell enlist`.", ephemeral=True
+                "No Farewell to Arms grvnt found here. Start with `/arms enlist`.", ephemeral=True
             )
             return
         await send_interaction_text(
@@ -1642,12 +1702,12 @@ def build_bot() -> commands.Bot:
             filename="farewell_sheet.txt",
         )
 
-    @farewell_group.command(name="roster", description="List your Farewell to Arms grvnts.")
+    @arms_group.command(name="roster", description="List your Farewell to Arms grvnts.")
     async def farewell_roster(interaction: discord.Interaction) -> None:
         characters = farewell_store.list(interaction.user.id)
         if not characters:
             await interaction.response.send_message(
-                "You have no Farewell to Arms grvnts. Start with `/farewell enlist`.", ephemeral=True
+                "You have no Farewell to Arms grvnts. Start with `/arms enlist`.", ephemeral=True
             )
             return
         active = farewell_store.get_active(interaction.guild_id, interaction.user.id)
@@ -1660,7 +1720,7 @@ def build_bot() -> commands.Bot:
             )
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
-    @farewell_group.command(name="switch", description="Set your active Farewell to Arms grvnt for this server.")
+    @arms_group.command(name="switch", description="Set your active Farewell to Arms grvnt for this server.")
     @app_commands.describe(character="Farewell to Arms grvnt name or id")
     @app_commands.autocomplete(character=farewell_character_autocomplete)
     async def farewell_switch(interaction: discord.Interaction, character: str) -> None:
@@ -1678,12 +1738,12 @@ def build_bot() -> commands.Bot:
             f"Active Farewell to Arms grvnt is now **{escape_discord_text(selected.name)}**.", ephemeral=True
         )
 
-    @farewell_group.command(name="export", description="Download your active Farewell to Arms sheet.")
+    @arms_group.command(name="export", description="Download your active Farewell to Arms sheet.")
     async def farewell_export(interaction: discord.Interaction) -> None:
         character = farewell_store.get_active(interaction.guild_id, interaction.user.id)
         if character is None:
             await interaction.response.send_message(
-                "No Farewell to Arms grvnt found here. Start with `/farewell enlist`.", ephemeral=True
+                "No Farewell to Arms grvnt found here. Start with `/arms enlist`.", ephemeral=True
             )
             return
         payload = BytesIO(character.export_text().encode("utf-8"))
@@ -1693,14 +1753,14 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @farewell_group.command(name="set", description="Update a field on your active Farewell to Arms grvnt.")
+    @arms_group.command(name="set", description="Update a field on your active Farewell to Arms grvnt.")
     @app_commands.describe(field="Field to update", value="New field value")
     @app_commands.autocomplete(field=farewell_field_autocomplete)
     async def farewell_set(interaction: discord.Interaction, field: str, value: str) -> None:
         character = farewell_store.get_active(interaction.guild_id, interaction.user.id)
         if character is None:
             await interaction.response.send_message(
-                "No Farewell to Arms grvnt found here. Start with `/farewell enlist`.", ephemeral=True
+                "No Farewell to Arms grvnt found here. Start with `/arms enlist`.", ephemeral=True
             )
             return
         try:
@@ -1714,13 +1774,13 @@ def build_bot() -> commands.Bot:
             f"{summary}\n" + "\n".join(character.sheet_lines()), ephemeral=True
         )
 
-    @farewell_group.command(name="gear-add", description="Add SHIT or equipment to your active grvnt.")
+    @arms_group.command(name="gear-add", description="Add SHIT or equipment to your active grvnt.")
     @app_commands.describe(item="Item to add")
     async def farewell_gear_add(interaction: discord.Interaction, item: str) -> None:
         character = farewell_store.get_active(interaction.guild_id, interaction.user.id)
         if character is None:
             await interaction.response.send_message(
-                "No Farewell to Arms grvnt found here. Start with `/farewell enlist`.", ephemeral=True
+                "No Farewell to Arms grvnt found here. Start with `/arms enlist`.", ephemeral=True
             )
             return
         try:
@@ -1735,13 +1795,13 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @farewell_group.command(name="gear-remove", description="Remove numbered SHIT from your active grvnt.")
-    @app_commands.describe(item_number="Item number shown on `/farewell sheet`")
+    @arms_group.command(name="gear-remove", description="Remove numbered SHIT from your active grvnt.")
+    @app_commands.describe(item_number="Item number shown on `/arms sheet`")
     async def farewell_gear_remove(interaction: discord.Interaction, item_number: int) -> None:
         character = farewell_store.get_active(interaction.guild_id, interaction.user.id)
         if character is None:
             await interaction.response.send_message(
-                "No Farewell to Arms grvnt found here. Start with `/farewell enlist`.", ephemeral=True
+                "No Farewell to Arms grvnt found here. Start with `/arms enlist`.", ephemeral=True
             )
             return
         try:
@@ -1756,7 +1816,7 @@ def build_bot() -> commands.Bot:
             ephemeral=True,
         )
 
-    @farewell_group.command(name="delete", description="Permanently delete one of your Farewell to Arms grvnts.")
+    @arms_group.command(name="delete", description="Permanently delete one of your Farewell to Arms grvnts.")
     @app_commands.describe(character="Farewell to Arms grvnt to delete")
     @app_commands.autocomplete(character=farewell_character_autocomplete)
     async def farewell_delete(interaction: discord.Interaction, character: str) -> None:
@@ -1771,7 +1831,7 @@ def build_bot() -> commands.Bot:
             f"Deleted Farewell to Arms grvnt **{escape_discord_text(selected.name)}**.", ephemeral=True
         )
 
-    @farewell_group.command(name="roll", description="Roll dice or test an active grvnt's stat.")
+    @arms_group.command(name="roll", description="Roll dice or test an active grvnt's stat.")
     @app_commands.describe(target="Dice like 2d6+1 or agility, presence, strength, toughness", dr="Difficulty rating")
     async def farewell_roll(interaction: discord.Interaction, target: str, dr: int = DEFAULT_DR) -> None:
         lowered = target.casefold().strip()
@@ -1779,7 +1839,7 @@ def build_bot() -> commands.Bot:
             character = farewell_store.get_active(interaction.guild_id, interaction.user.id)
             if character is None:
                 await interaction.response.send_message(
-                    "No Farewell to Arms grvnt found here. Start with `/farewell enlist`.", ephemeral=True
+                    "No Farewell to Arms grvnt found here. Start with `/arms enlist`.", ephemeral=True
                 )
                 return
             modifier = getattr(character, lowered)
@@ -1799,7 +1859,8 @@ def build_bot() -> commands.Bot:
         modifier_text = f" {modifier:+d}" if modifier else ""
         await interaction.response.send_message(f"Rolled `{target}` -> {rolls}{modifier_text} = **{total}**")
 
-    bot.tree.add_command(farewell_group)
+    bot.tree.add_command(mork_group)
+    bot.tree.add_command(arms_group)
 
     @bot.tree.error
     async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
