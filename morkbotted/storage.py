@@ -852,10 +852,11 @@ class CharacterStore:
         with self._connect() as connection:
             row = None
             if name_or_id.strip().isdigit():
-                row = connection.execute(
-                    "SELECT * FROM characters WHERE id = ? AND user_id = ?",
-                    (int(name_or_id.strip()), user_id),
-                ).fetchone()
+                query = "SELECT * FROM characters WHERE id = ? AND user_id = ?"
+                params: list[object] = [int(name_or_id.strip()), user_id]
+                if not include_archived:
+                    query += " AND status = 'active'"
+                row = connection.execute(query, params).fetchone()
             if row is None:
                 query = "SELECT * FROM characters WHERE user_id = ? AND lower(name) = ?"
                 params: list[object] = [user_id, name_or_id.strip().lower()]
@@ -1477,7 +1478,19 @@ class CharacterStore:
             )
         return self.get_character_by_id(character_id)
 
-    def delete_character(self, character_id: int) -> None:
+    def delete_character(self, character_id: int, user_id: int | None = None) -> bool:
         with self._connect() as connection:
+            query = "SELECT id FROM characters WHERE id = ?"
+            params: list[object] = [character_id]
+            if user_id is not None:
+                query += " AND user_id = ?"
+                params.append(user_id)
+            if connection.execute(query, params).fetchone() is None:
+                return False
+
             connection.execute("DELETE FROM active_characters WHERE character_id = ?", (character_id,))
-            connection.execute("DELETE FROM characters WHERE id = ?", (character_id,))
+            connection.execute("DELETE FROM character_class_features WHERE character_id = ?", (character_id,))
+            connection.execute("DELETE FROM character_equipment WHERE character_id = ?", (character_id,))
+            connection.execute("DELETE FROM character_notes WHERE character_id = ?", (character_id,))
+            cursor = connection.execute("DELETE FROM characters WHERE id = ?", (character_id,))
+        return cursor.rowcount > 0

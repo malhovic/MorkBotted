@@ -2,7 +2,14 @@ import random
 import unittest
 from pathlib import Path
 
-from morkbotted.farewell import CLASSES, find_farewell_class, generate_farewell_character
+from morkbotted.farewell import (
+    CLASSES,
+    add_farewell_gear,
+    find_farewell_class,
+    generate_farewell_character,
+    remove_farewell_gear,
+    update_farewell_field,
+)
 from morkbotted.farewell_storage import FarewellCharacterStore
 
 
@@ -82,6 +89,9 @@ class FarewellCharacterTest(unittest.TestCase):
         ))
 
         self.assertEqual([item.name for item in store.list(44)], ["Roach", "Rat"])
+        self.assertEqual(store.find(44, "Roach").id, first.id)
+        self.assertEqual(store.find(44, str(second.id)).name, "Rat")
+        self.assertIsNone(store.find(55, "Roach"))
         store.set_active(999, 44, first.id)
         self.assertEqual(store.get_active(999, 44).name, "Roach")
         store.set_active(999, 44, second.id)
@@ -93,6 +103,53 @@ class FarewellCharacterTest(unittest.TestCase):
             user_id=1, discord_name="Tester", class_template=CLASSES[0], name="**@everyone**"
         )
         self.assertIn(r"\*\*@everyone\*\*", "\n".join(character.sheet_lines()))
+
+    def test_farewell_character_fields_and_gear_can_be_managed(self) -> None:
+        store = FarewellCharacterStore(self.db_path)
+        character = store.save(generate_farewell_character(
+            user_id=44, discord_name="Tester", class_template=CLASSES[0], name="Roach"
+        ))
+
+        update_farewell_field(character, "HP", "-1")
+        update_farewell_field(character, "shock", "8")
+        update_farewell_field(character, "name", "Last Legs")
+        added = add_farewell_gear(character, "Stolen helmet")
+        store.update(character)
+
+        reloaded = store.get(character.id, 44)
+        self.assertEqual(reloaded.name, "Last Legs")
+        self.assertEqual(reloaded.hp, -1)
+        self.assertEqual(reloaded.shock, 8)
+        self.assertIn(added, reloaded.gear)
+
+        item_number = reloaded.gear.index(added) + 1
+        self.assertEqual(remove_farewell_gear(reloaded, item_number), added)
+        store.update(reloaded)
+        self.assertNotIn(added, store.get(character.id, 44).gear)
+
+    def test_farewell_delete_is_owner_scoped_and_clears_active_selection(self) -> None:
+        store = FarewellCharacterStore(self.db_path)
+        character = store.save(generate_farewell_character(
+            user_id=44, discord_name="Tester", class_template=CLASSES[0], name="Roach"
+        ))
+        store.set_active(999, 44, character.id)
+
+        self.assertFalse(store.delete(character.id, 55))
+        self.assertIsNotNone(store.get(character.id, 44))
+        self.assertTrue(store.delete(character.id, 44))
+        self.assertIsNone(store.get(character.id, 44))
+        self.assertIsNone(store.get_active(999, 44))
+
+    def test_farewell_field_validation_rejects_invalid_values(self) -> None:
+        character = generate_farewell_character(
+            user_id=1, discord_name="Tester", class_template=CLASSES[0]
+        )
+        with self.assertRaisesRegex(ValueError, "between -3 and 6"):
+            update_farewell_field(character, "agility", "20")
+        with self.assertRaisesRegex(ValueError, "whole number"):
+            update_farewell_field(character, "ammo", "lots")
+        with self.assertRaisesRegex(ValueError, "Unknown field"):
+            update_farewell_field(character, "class_name", "Cheater")
 
 
 if __name__ == "__main__":

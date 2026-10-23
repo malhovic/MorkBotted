@@ -5,10 +5,42 @@ from dataclasses import dataclass, field
 from io import StringIO
 from typing import Any
 
-from morkbotted.security import escape_discord_text
+from morkbotted.security import MAX_EQUIPMENT_ITEMS, escape_discord_text, validate_text
 
 
 STAT_NAMES = ("agility", "presence", "strength", "toughness")
+FAREWELL_EDITABLE_FIELDS = (
+    "name", "agility", "presence", "strength", "toughness", "hp", "max_hp",
+    "omens", "silver", "ammo", "shock", "powers", "firearm", "sidearm",
+    "armor", "reason", "battle_scar", "vice", "specialty", "history", "notes",
+)
+
+FAREWELL_NUMERIC_RANGES = {
+    "agility": (-3, 6),
+    "presence": (-3, 6),
+    "strength": (-3, 6),
+    "toughness": (-3, 6),
+    "hp": (-100, 1000),
+    "max_hp": (1, 1000),
+    "omens": (0, 1000),
+    "silver": (0, 1_000_000),
+    "ammo": (0, 1000),
+    "shock": (0, 1000),
+    "powers": (0, 1000),
+}
+
+FAREWELL_TEXT_VALIDATORS = {
+    "name": "name",
+    "firearm": "equipment",
+    "sidearm": "equipment",
+    "armor": "equipment",
+    "reason": "background",
+    "battle_scar": "background",
+    "vice": "background",
+    "specialty": "description",
+    "history": "background",
+    "notes": "note",
+}
 
 REASONS_FOR_ENLISTMENT = [
     "You had no choice: enlist or be hung for your crimes.",
@@ -383,7 +415,10 @@ class FarewellCharacter:
             lines.append(f"Class Specialty: {esc(self.specialty)}")
         if self.history:
             lines.append(f"History: {esc(self.history)}")
-        lines.append("SHIT: " + (", ".join(esc(item) for item in self.gear) if self.gear else "None"))
+        lines.append(
+            "SHIT: "
+            + (" | ".join(f"{index}. {esc(item)}" for index, item in enumerate(self.gear, start=1)) if self.gear else "None")
+        )
         lines.append("War Scrolls: " + (", ".join(esc(item) for item in self.war_scrolls) if self.war_scrolls else "None"))
         if self.notes:
             lines.append(f"Rules: {esc(self.notes)}")
@@ -405,6 +440,46 @@ class FarewellCharacter:
         if self.notes:
             buffer.write(f"\nClass Rules\n{self.notes}\n")
         return buffer.getvalue().strip()
+
+
+def update_farewell_field(character: FarewellCharacter, field_name: str, raw_value: str) -> str:
+    normalized = field_name.casefold().strip().replace(" ", "_").replace("-", "_")
+    if normalized not in FAREWELL_EDITABLE_FIELDS:
+        raise ValueError("Unknown field. Use the field autocomplete list.")
+
+    if normalized in FAREWELL_NUMERIC_RANGES:
+        try:
+            value = int(raw_value.strip())
+        except ValueError as error:
+            raise ValueError(f"{normalized.replace('_', ' ').title()} must be a whole number.") from error
+        minimum, maximum = FAREWELL_NUMERIC_RANGES[normalized]
+        if value < minimum or value > maximum:
+            raise ValueError(
+                f"{normalized.replace('_', ' ').title()} must be between {minimum} and {maximum}."
+            )
+        setattr(character, normalized, value)
+        return f"{normalized.replace('_', ' ').title()} set to {value}."
+
+    validator = FAREWELL_TEXT_VALIDATORS[normalized]
+    value = validate_text(raw_value, validator, required=normalized == "name")
+    setattr(character, normalized, value)
+    return f"{normalized.replace('_', ' ').title()} updated."
+
+
+def add_farewell_gear(character: FarewellCharacter, item: str) -> str:
+    if len(character.gear) >= MAX_EQUIPMENT_ITEMS:
+        raise ValueError(f"A grvnt can carry at most {MAX_EQUIPMENT_ITEMS} recorded items.")
+    clean_item = validate_text(item, "equipment", required=True)
+    character.gear.append(clean_item)
+    return clean_item
+
+
+def remove_farewell_gear(character: FarewellCharacter, item_number: int) -> str:
+    if not character.gear:
+        raise ValueError("This grvnt has no recorded SHIT to remove.")
+    if item_number < 1 or item_number > len(character.gear):
+        raise ValueError(f"Item number must be between 1 and {len(character.gear)}.")
+    return character.gear.pop(item_number - 1)
 
 
 def _roll(count: int, sides: int) -> int:

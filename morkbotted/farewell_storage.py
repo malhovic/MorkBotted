@@ -69,6 +69,34 @@ class FarewellCharacterStore:
             character.id = cursor.lastrowid
         return character
 
+    def update(self, character: FarewellCharacter) -> FarewellCharacter:
+        if character.id is None:
+            raise ValueError("This Farewell to Arms character has not been saved yet.")
+        existing = self.get(character.id, character.user_id)
+        if existing is None:
+            raise ValueError("That Farewell to Arms character does not belong to this user.")
+        payload = character.to_payload()
+        payload.pop("id", None)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE farewell_characters
+                SET discord_name = ?, name = ?, class_name = ?, payload = ?
+                WHERE id = ? AND user_id = ?
+                """,
+                (
+                    character.discord_name,
+                    character.name,
+                    character.class_name,
+                    json.dumps(payload),
+                    character.id,
+                    character.user_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("The Farewell to Arms character could not be updated.")
+        return character
+
     def list(self, user_id: int) -> list[FarewellCharacter]:
         with self._connect() as connection:
             rows = connection.execute(
@@ -84,6 +112,24 @@ class FarewellCharacterStore:
             parameters = (character_id, user_id)
         with self._connect() as connection:
             row = connection.execute(query, parameters).fetchone()
+        return self._from_row(row) if row else None
+
+    def find(self, user_id: int, name_or_id: str) -> FarewellCharacter | None:
+        normalized = name_or_id.strip()
+        if not normalized:
+            return None
+        if normalized.isdigit():
+            return self.get(int(normalized), user_id)
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM farewell_characters
+                WHERE user_id = ? AND lower(name) = lower(?)
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (user_id, normalized),
+            ).fetchone()
         return self._from_row(row) if row else None
 
     def set_active(self, guild_id: int, user_id: int, character_id: int) -> None:
@@ -117,6 +163,14 @@ class FarewellCharacterStore:
 
     def delete(self, character_id: int, user_id: int) -> bool:
         with self._connect() as connection:
+            row = connection.execute(
+                "SELECT id FROM farewell_characters WHERE id = ? AND user_id = ?", (character_id, user_id)
+            ).fetchone()
+            if row is None:
+                return False
+            connection.execute(
+                "DELETE FROM farewell_active_characters WHERE character_id = ?", (character_id,)
+            )
             cursor = connection.execute(
                 "DELETE FROM farewell_characters WHERE id = ? AND user_id = ?", (character_id, user_id)
             )

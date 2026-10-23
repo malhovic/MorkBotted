@@ -157,6 +157,10 @@ Ability fields use modifiers such as `-1`, `0`, or `+2`, not raw 3d6 totals. Equ
 | `/farewell roster` | List your saved grvnts. |
 | `/farewell switch` | Select the active grvnt for the current server. |
 | `/farewell export` | Download the active grvnt sheet. |
+| `/farewell set` | Update a stat, resource, name, weapon, armor, background detail, or specialty on the active grvnt. |
+| `/farewell gear-add` | Add equipment or SHIT to the active grvnt. |
+| `/farewell gear-remove` | Remove equipment by the number displayed on the grvnt sheet. |
+| `/farewell delete` | Permanently delete one of your saved grvnts. |
 | `/farewell roll` | Roll raw dice or test an active grvnt's stat. |
 
 The generator follows the REDUX enlistment sequence and accounts for class-specific dice, fixed equipment, specialty counts, restrictions, and starting War Scrolls. Generated Discord sheets include the rule text needed to use the selected specialty at the table.

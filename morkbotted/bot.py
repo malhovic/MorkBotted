@@ -21,8 +21,15 @@ from morkbotted.creation import (
 )
 from morkbotted.generator import generate_random_character
 from morkbotted.farewell import CLASSES as FAREWELL_CLASSES
+from morkbotted.farewell import FAREWELL_EDITABLE_FIELDS
 from morkbotted.farewell import STAT_NAMES as FAREWELL_STAT_NAMES
-from morkbotted.farewell import find_farewell_class, generate_farewell_character
+from morkbotted.farewell import (
+    add_farewell_gear,
+    find_farewell_class,
+    generate_farewell_character,
+    remove_farewell_gear,
+    update_farewell_field,
+)
 from morkbotted.farewell_storage import FarewellCharacterStore
 from morkbotted.omens import omen_status_text, roll_daily_omens
 from morkbotted.security import (
@@ -512,6 +519,18 @@ def build_bot() -> commands.Bot:
             choices.append(app_commands.Choice(name=label[:100], value=str(character.id)))
         return choices[:25]
 
+    async def farewell_field_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        del interaction
+        current_lower = current.casefold().strip()
+        return [
+            app_commands.Choice(name=field_name.replace("_", " ").title(), value=field_name)
+            for field_name in FAREWELL_EDITABLE_FIELDS
+            if not current_lower or current_lower in field_name.replace("_", " ")
+        ][:25]
+
     @bot.event
     async def on_ready() -> None:
         nonlocal slash_synced
@@ -538,7 +557,7 @@ def build_bot() -> commands.Bot:
             "`/create` build or import a character with helper fields",
             "`/scvmbirth` generate a ready-to-play random character",
             "`/farewell enlist` generate a separate Farewell to Arms REDUX grvnt",
-            "`/farewell sheet`, `/farewell roster`, and `/farewell switch` manage that roster",
+            "`/farewell sheet`, `/farewell roster`, `/farewell switch`, `/farewell set`, and `/farewell delete` manage that roster",
             "`/characters` list your roster",
             "`/character-switch` set the active character for this server",
             "`/character-archive` mark a character archived, dead, npc, or active",
@@ -664,7 +683,10 @@ def build_bot() -> commands.Bot:
         if selected is None or selected.id is None:
             await interaction.response.send_message("I couldn't find a character matching that selection.", ephemeral=True)
             return
-        store.delete_character(selected.id)
+        deleted = store.delete_character(selected.id, interaction.user.id)
+        if not deleted:
+            await interaction.response.send_message("I couldn't delete that character.", ephemeral=True)
+            return
         await interaction.response.send_message(
             f"Deleted character **{escape_discord_text(selected.name)}**.",
             ephemeral=True,
@@ -1647,10 +1669,7 @@ def build_bot() -> commands.Bot:
                 "Use this in a server so I can keep a separate active grvnt there.", ephemeral=True
             )
             return
-        if not character.isdigit():
-            await interaction.response.send_message("Choose a grvnt from autocomplete.", ephemeral=True)
-            return
-        selected = farewell_store.get(int(character), interaction.user.id)
+        selected = farewell_store.find(interaction.user.id, character)
         if selected is None or selected.id is None:
             await interaction.response.send_message("I could not find that grvnt in your roster.", ephemeral=True)
             return
@@ -1672,6 +1691,84 @@ def build_bot() -> commands.Bot:
             content=f"Farewell to Arms export for **{escape_discord_text(character.name)}**",
             file=discord.File(payload, filename=f"farewell-grvnt-{character.id}.txt"),
             ephemeral=True,
+        )
+
+    @farewell_group.command(name="set", description="Update a field on your active Farewell to Arms grvnt.")
+    @app_commands.describe(field="Field to update", value="New field value")
+    @app_commands.autocomplete(field=farewell_field_autocomplete)
+    async def farewell_set(interaction: discord.Interaction, field: str, value: str) -> None:
+        character = farewell_store.get_active(interaction.guild_id, interaction.user.id)
+        if character is None:
+            await interaction.response.send_message(
+                "No Farewell to Arms grvnt found here. Start with `/farewell enlist`.", ephemeral=True
+            )
+            return
+        try:
+            summary = update_farewell_field(character, field, value)
+            character.discord_name = interaction.user.display_name
+            farewell_store.update(character)
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"{summary}\n" + "\n".join(character.sheet_lines()), ephemeral=True
+        )
+
+    @farewell_group.command(name="gear-add", description="Add SHIT or equipment to your active grvnt.")
+    @app_commands.describe(item="Item to add")
+    async def farewell_gear_add(interaction: discord.Interaction, item: str) -> None:
+        character = farewell_store.get_active(interaction.guild_id, interaction.user.id)
+        if character is None:
+            await interaction.response.send_message(
+                "No Farewell to Arms grvnt found here. Start with `/farewell enlist`.", ephemeral=True
+            )
+            return
+        try:
+            added = add_farewell_gear(character, item)
+            character.discord_name = interaction.user.display_name
+            farewell_store.update(character)
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"Added **{escape_discord_text(added)}** to **{escape_discord_text(character.name)}**.",
+            ephemeral=True,
+        )
+
+    @farewell_group.command(name="gear-remove", description="Remove numbered SHIT from your active grvnt.")
+    @app_commands.describe(item_number="Item number shown on `/farewell sheet`")
+    async def farewell_gear_remove(interaction: discord.Interaction, item_number: int) -> None:
+        character = farewell_store.get_active(interaction.guild_id, interaction.user.id)
+        if character is None:
+            await interaction.response.send_message(
+                "No Farewell to Arms grvnt found here. Start with `/farewell enlist`.", ephemeral=True
+            )
+            return
+        try:
+            removed = remove_farewell_gear(character, item_number)
+            character.discord_name = interaction.user.display_name
+            farewell_store.update(character)
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"Removed **{escape_discord_text(removed)}** from **{escape_discord_text(character.name)}**.",
+            ephemeral=True,
+        )
+
+    @farewell_group.command(name="delete", description="Permanently delete one of your Farewell to Arms grvnts.")
+    @app_commands.describe(character="Farewell to Arms grvnt to delete")
+    @app_commands.autocomplete(character=farewell_character_autocomplete)
+    async def farewell_delete(interaction: discord.Interaction, character: str) -> None:
+        selected = farewell_store.find(interaction.user.id, character)
+        if selected is None or selected.id is None:
+            await interaction.response.send_message("I could not find that grvnt in your roster.", ephemeral=True)
+            return
+        if not farewell_store.delete(selected.id, interaction.user.id):
+            await interaction.response.send_message("I could not delete that grvnt.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"Deleted Farewell to Arms grvnt **{escape_discord_text(selected.name)}**.", ephemeral=True
         )
 
     @farewell_group.command(name="roll", description="Roll dice or test an active grvnt's stat.")
