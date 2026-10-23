@@ -6,3 +6,6 @@ __pycache__/
 *.py[cod]
 *.db
 *.db-*
+
+# Private, licensed rules material used only during development.
+reference_text/

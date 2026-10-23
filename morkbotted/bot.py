@@ -20,6 +20,10 @@ from morkbotted.creation import (
     parse_int,
 )
 from morkbotted.generator import generate_random_character
+from morkbotted.farewell import CLASSES as FAREWELL_CLASSES
+from morkbotted.farewell import STAT_NAMES as FAREWELL_STAT_NAMES
+from morkbotted.farewell import find_farewell_class, generate_farewell_character
+from morkbotted.farewell_storage import FarewellCharacterStore
 from morkbotted.omens import omen_status_text, roll_daily_omens
 from morkbotted.security import (
     MAX_EQUIPMENT_ITEMS,
@@ -310,7 +314,13 @@ def build_bot() -> commands.Bot:
         allowed_mentions=discord.AllowedMentions.none(),
     )
     store = CharacterStore(db_path)
+    farewell_store = FarewellCharacterStore(db_path)
     slash_synced = False
+
+    farewell_group = app_commands.Group(
+        name="farewell",
+        description="Farewell to Arms REDUX character tools.",
+    )
 
     async def class_name_autocomplete(
         interaction: discord.Interaction,
@@ -477,6 +487,31 @@ def build_bot() -> commands.Bot:
             matches.append(app_commands.Choice(name=label[:100], value=str(character.id)))
         return matches[:25]
 
+    async def farewell_class_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        del interaction
+        current_lower = current.casefold().strip()
+        return [
+            app_commands.Choice(name=class_template.name, value=class_template.slug)
+            for class_template in FAREWELL_CLASSES
+            if not current_lower or current_lower in class_template.name.casefold()
+        ][:25]
+
+    async def farewell_character_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        current_lower = current.casefold().strip()
+        choices = []
+        for character in farewell_store.list(interaction.user.id):
+            label = f"{character.name} ({character.class_name}) #{character.id}"
+            if current_lower and current_lower not in label.casefold():
+                continue
+            choices.append(app_commands.Choice(name=label[:100], value=str(character.id)))
+        return choices[:25]
+
     @bot.event
     async def on_ready() -> None:
         nonlocal slash_synced
@@ -502,6 +537,8 @@ def build_bot() -> commands.Bot:
             "MorkBotted uses slash commands only.",
             "`/create` build or import a character with helper fields",
             "`/scvmbirth` generate a ready-to-play random character",
+            "`/farewell enlist` generate a separate Farewell to Arms REDUX grvnt",
+            "`/farewell sheet`, `/farewell roster`, and `/farewell switch` manage that roster",
             "`/characters` list your roster",
             "`/character-switch` set the active character for this server",
             "`/character-archive` mark a character archived, dead, npc, or active",
@@ -1526,6 +1563,146 @@ def build_bot() -> commands.Bot:
             + build_character_sheet(character),
             ephemeral=True,
         )
+
+    @farewell_group.command(name="enlist", description="Generate and save a complete Farewell to Arms grvnt.")
+    @app_commands.describe(
+        class_name="Optional class; leave blank to roll one of all 12 classes",
+        name="Optional nickname; leave blank to roll on the nickname table",
+    )
+    @app_commands.autocomplete(class_name=farewell_class_autocomplete)
+    async def farewell_enlist(
+        interaction: discord.Interaction,
+        class_name: str | None = None,
+        name: str = "",
+    ) -> None:
+        class_template = find_farewell_class(class_name)
+        if class_name and class_template is None:
+            await interaction.response.send_message(
+                f"No Farewell to Arms class named `{escape_discord_text(class_name)}`. Try `/farewell classes`.",
+                ephemeral=True,
+            )
+            return
+        character = generate_farewell_character(
+            user_id=interaction.user.id,
+            discord_name=interaction.user.display_name,
+            class_template=class_template,
+            name=validate_text(name, "farewell_name") if name else "",
+        )
+        farewell_store.save(character)
+        if interaction.guild_id is not None and character.id is not None:
+            farewell_store.set_active(interaction.guild_id, interaction.user.id, character.id)
+        await send_interaction_text(
+            interaction,
+            "Grvnt enlisted. War is never to be glorified.\n" + "\n".join(character.sheet_lines()),
+            ephemeral=True,
+            filename="farewell_grvnt.txt",
+        )
+
+    @farewell_group.command(name="classes", description="List the 12 Farewell to Arms REDUX classes.")
+    async def farewell_classes(interaction: discord.Interaction) -> None:
+        await interaction.response.send_message(
+            "Farewell to Arms REDUX classes:\n" + "\n".join(f"- {item.name}" for item in FAREWELL_CLASSES),
+            ephemeral=True,
+        )
+
+    @farewell_group.command(name="sheet", description="Show your active Farewell to Arms grvnt.")
+    async def farewell_sheet(interaction: discord.Interaction) -> None:
+        character = farewell_store.get_active(interaction.guild_id, interaction.user.id)
+        if character is None:
+            await interaction.response.send_message(
+                "No Farewell to Arms grvnt found here. Start with `/farewell enlist`.", ephemeral=True
+            )
+            return
+        await send_interaction_text(
+            interaction,
+            "\n".join(character.sheet_lines()),
+            ephemeral=True,
+            filename="farewell_sheet.txt",
+        )
+
+    @farewell_group.command(name="roster", description="List your Farewell to Arms grvnts.")
+    async def farewell_roster(interaction: discord.Interaction) -> None:
+        characters = farewell_store.list(interaction.user.id)
+        if not characters:
+            await interaction.response.send_message(
+                "You have no Farewell to Arms grvnts. Start with `/farewell enlist`.", ephemeral=True
+            )
+            return
+        active = farewell_store.get_active(interaction.guild_id, interaction.user.id)
+        lines = ["Your Farewell to Arms roster:"]
+        for character in characters:
+            marker = " <- active here" if active and character.id == active.id else ""
+            lines.append(
+                f"- #{character.id} **{escape_discord_text(character.name)}** "
+                f"({escape_discord_text(character.class_name)}){marker}"
+            )
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+    @farewell_group.command(name="switch", description="Set your active Farewell to Arms grvnt for this server.")
+    @app_commands.describe(character="Farewell to Arms grvnt name or id")
+    @app_commands.autocomplete(character=farewell_character_autocomplete)
+    async def farewell_switch(interaction: discord.Interaction, character: str) -> None:
+        if interaction.guild_id is None:
+            await interaction.response.send_message(
+                "Use this in a server so I can keep a separate active grvnt there.", ephemeral=True
+            )
+            return
+        if not character.isdigit():
+            await interaction.response.send_message("Choose a grvnt from autocomplete.", ephemeral=True)
+            return
+        selected = farewell_store.get(int(character), interaction.user.id)
+        if selected is None or selected.id is None:
+            await interaction.response.send_message("I could not find that grvnt in your roster.", ephemeral=True)
+            return
+        farewell_store.set_active(interaction.guild_id, interaction.user.id, selected.id)
+        await interaction.response.send_message(
+            f"Active Farewell to Arms grvnt is now **{escape_discord_text(selected.name)}**.", ephemeral=True
+        )
+
+    @farewell_group.command(name="export", description="Download your active Farewell to Arms sheet.")
+    async def farewell_export(interaction: discord.Interaction) -> None:
+        character = farewell_store.get_active(interaction.guild_id, interaction.user.id)
+        if character is None:
+            await interaction.response.send_message(
+                "No Farewell to Arms grvnt found here. Start with `/farewell enlist`.", ephemeral=True
+            )
+            return
+        payload = BytesIO(character.export_text().encode("utf-8"))
+        await interaction.response.send_message(
+            content=f"Farewell to Arms export for **{escape_discord_text(character.name)}**",
+            file=discord.File(payload, filename=f"farewell-grvnt-{character.id}.txt"),
+            ephemeral=True,
+        )
+
+    @farewell_group.command(name="roll", description="Roll dice or test an active grvnt's stat.")
+    @app_commands.describe(target="Dice like 2d6+1 or agility, presence, strength, toughness", dr="Difficulty rating")
+    async def farewell_roll(interaction: discord.Interaction, target: str, dr: int = DEFAULT_DR) -> None:
+        lowered = target.casefold().strip()
+        if lowered in FAREWELL_STAT_NAMES:
+            character = farewell_store.get_active(interaction.guild_id, interaction.user.id)
+            if character is None:
+                await interaction.response.send_message(
+                    "No Farewell to Arms grvnt found here. Start with `/farewell enlist`.", ephemeral=True
+                )
+                return
+            modifier = getattr(character, lowered)
+            die = random.randint(1, 20)
+            total = die + modifier
+            outcome = "Success" if total >= dr else "Failure"
+            await interaction.response.send_message(
+                f"**{escape_discord_text(character.name)}** tests `{lowered.title()}`: "
+                f"`d20({die}) {modifier:+d} = {total}` vs DR `{dr}` -> **{outcome}**"
+            )
+            return
+        try:
+            rolls, modifier, total = roll_dice(lowered)
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        modifier_text = f" {modifier:+d}" if modifier else ""
+        await interaction.response.send_message(f"Rolled `{target}` -> {rolls}{modifier_text} = **{total}**")
+
+    bot.tree.add_command(farewell_group)
 
     @bot.tree.error
     async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:

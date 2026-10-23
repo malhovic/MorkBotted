@@ -1,247 +1,253 @@
 # MorkBotted
 
-`MorkBotted` is a Discord bot MVP for running MORK BORG characters inside Discord. It stores multiple characters per Discord user in SQLite, tracks an active character per server, supports native Discord slash commands with helper fields, rolls raw dice, handles MORK BORG ability tests, and exports a text character sheet from the bot's saved data.
+![MorkBotted banner](MorkBotted%20Banner%20v2.png)
 
-## What it supports
+MorkBotted is a slash-command Discord bot for creating and running characters in **MÖRK BORG** and **Farewell to Arms REDUX**. It provides persistent character rosters, rules-aware random generation, dice and ability tests, character-sheet exports, and server-scoped GM tools.
 
-- Native slash-command character creation with helper fields
-- One-button random character generation with `/scvmbirth`
-- SQLite-backed character storage with automatic migration from the older JSON file
-- Multiple characters per user with per-server active character selection
-- Stored class templates and feature data for core and supplemental MORK BORG classes, including Dire Hunter
-- Server-scoped GM homebrew classes and reusable class features
-- Ability modifiers for Agility, Presence, Strength, and Toughness
-- Raw dice expressions like `/roll target:d6` or `/roll target:2d8+1`
-- MORK BORG-style tests like `/roll target:strength` or `/roll target:presence dr:14`
-- Slash-command `gettingbetter` flow with typed helper choices
-- Character sheet export as a `.txt` attachment
-- In-bot updates for stats, HP, Omens, silver, equipment, and notes
+The two game systems are integrated into the same bot but use separate rosters. Your active MÖRK BORG character never replaces your active Farewell to Arms grvnt.
 
-## Why the commands look this way
+## Features
 
-This MVP is built around the common MORK BORG structure from the materials you linked:
+### MÖRK BORG
 
-- Characters track four core abilities: Agility, Presence, Strength, and Toughness.
-- Most tests are rolled on a d20 and modified by the relevant ability.
-- A default DR of 12 is a sensible baseline for ability checks unless the GM sets a different DR.
-- HP, Omens, silver, inventory, and short free-text notes are useful minimum fields for Discord-side play.
+- Create characters manually with guided Discord fields.
+- Generate ready-to-play characters with `/scvmbirth`.
+- Choose from stored core, supplemental, and server-homebrew classes.
+- Track abilities, HP, Omens, silver, equipment, notes, and class features.
+- Maintain multiple characters with a different active character in each server.
+- Apply automatic or manual Getting Better results.
+- Roll raw dice or ability tests against a Difficulty Rating.
+- Export a saved character sheet as a text file.
 
-The bot now uses the attached class PDFs and rules references to store class notes, feature tables, and source metadata in the database so character sheets can grow into richer formatting later.
+### Farewell to Arms REDUX
 
-## Setup
+- Generate a complete grvnt with `/farewell enlist`.
+- Roll from all 12 entry-level REDUX classes or select a specific class.
+- Generate class-adjusted stats, HP, Omens, silver, Ammo, Powers, and starting SHOCK.
+- Generate firearms, side arms, armor, SHIT, War Scrolls, nicknames, battle scars, vices, enlistment reasons, histories, and class specialties.
+- Apply class-specific rules for characters such as the Embedded One, Altered Mercenary, Homesick Rifleman, and New World Engineer.
+- Maintain an independent Farewell roster and active grvnt per server.
+- Roll grvnt stat tests and export complete sheets.
 
-1. Install Python 3.10+.
-2. Create and activate a virtual environment.
-3. Install dependencies:
+Faction special-forces classes from the companion books are not included in starting-character generation because those classes are acquired through Promotion during play. The *Alone in the MÖRK* material is likewise treated as a separate solo-play variant.
 
-```powershell
+### GM tools
+
+- View the server's active MÖRK BORG party.
+- Track shared party loot and NPCs.
+- Create and edit server-scoped homebrew classes.
+- Create reusable homebrew features and link them to classes.
+- Restrict GM operations through Manage Server permission or a configurable Discord role.
+
+## Requirements
+
+- Python 3.10 or newer
+- A Discord application with a bot token
+- The `bot` and `applications.commands` OAuth scopes when inviting the bot
+
+## Quick start
+
+Clone the repository, enter the project directory, and create a virtual environment:
+
+```bash
 python -m venv .venv
-.venv\Scripts\Activate.ps1
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-4. Create your environment file:
+On Windows PowerShell, activate the environment with:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+Copy the environment template:
+
+```bash
+cp .env.example .env
+```
+
+On Windows PowerShell:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-5. Edit `.env` and set `DISCORD_TOKEN` to your Discord bot token. `DB_PATH` defaults to `data/morkbotted.db`.
-6. Optional but recommended for faster slash-command updates while you deploy changes: set `COMMAND_SYNC_GUILD_ID` to your main Discord server id.
-7. Run the bot:
+Set at least `DISCORD_TOKEN` in `.env`, then start the bot:
 
-```powershell
+```bash
 python bot.py
 ```
 
-Character and class data are stored in `data/morkbotted.db`. If `data/characters.json` exists from an older version, the bot migrates it into SQLite the first time the new store starts.
-New class seed data is also backfilled into existing databases on startup.
-If `COMMAND_SYNC_GUILD_ID` is set, the bot also syncs slash commands directly into that server on startup so command changes appear much faster than waiting on global propagation.
+The bot creates its SQLite schema automatically on startup. Restarting after an update also backfills class seed data and applies supported schema migrations.
+
+## Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `DISCORD_TOKEN` | Required | Discord bot token. |
+| `DATA_DIR` | `data` | Directory used for persistent application data. |
+| `DB_PATH` | `data/morkbotted.db` | SQLite database path. |
+| `COMMAND_SYNC_GUILD_ID` | Empty | Development server ID for faster slash-command synchronization. |
+| `GM_ROLE_NAME` | `scvm-gm` | Role allowed to use GM commands. Leave blank to require Manage Server permission. |
+
+Do not commit `.env`; it is ignored by Git. Use `.env.example` as the safe configuration template.
+
+## First commands to try
+
+For a MÖRK BORG character:
+
+```text
+/scvmbirth
+/sheet
+/roll target:strength dr:12
+```
+
+For a Farewell to Arms REDUX grvnt:
+
+```text
+/farewell enlist
+/farewell sheet
+/farewell roll target:presence dr:12
+```
+
+Both generators accept the relevant optional selections through Discord's native command interface. A newly generated character automatically becomes active in the server where it was created.
+
+## Command reference
+
+### General
+
+| Command | Description |
+| --- | --- |
+| `/ping` | Check whether the bot is responding. |
+| `/helpmb` | Show concise in-Discord command help. |
+| `/roll` | Roll dice notation such as `2d6+1`, or test an active MÖRK BORG ability. |
+
+### MÖRK BORG characters
+
+| Command | Description |
+| --- | --- |
+| `/create` | Manually create or import a character. |
+| `/scvmbirth` | Generate a complete random character, optionally from a selected class. |
+| `/characters` | List your saved roster. |
+| `/character-switch` | Select the active character for the current server. |
+| `/character-archive` | Mark a character active, archived, dead, or NPC. |
+| `/character-delete` | Permanently delete one of your characters. |
+| `/sheet` | Display the active character sheet. |
+| `/export` | Download the active character sheet. |
+| `/classes` | List available class templates. |
+| `/classinfo` | Inspect a stored class and its features. |
+| `/omens` | View, reroll, or set current Omens. |
+| `/gettingbetter` | Apply automatic or manual post-session stat changes. |
+| `/setstat` | Set an ability modifier. |
+| `/setfield` | Update a general character field. |
+| `/improve` | Increase or decrease a numeric character value. |
+| `/additem`, `/removeitem` | Manage equipment. |
+| `/notes`, `/addnote`, `/editnote`, `/removenote` | Manage character notes. |
+
+Ability fields use modifiers such as `-1`, `0`, or `+2`, not raw 3d6 totals. Equipment and notes supplied through `/create` accept comma-separated values. When a stored class is selected, Discord autocompletes that class's available features.
+
+### Farewell to Arms REDUX
+
+| Command | Description |
+| --- | --- |
+| `/farewell enlist` | Generate and save a complete grvnt. A class and nickname are optional. |
+| `/farewell classes` | List the 12 available entry-level classes. |
+| `/farewell sheet` | Display the active grvnt. |
+| `/farewell roster` | List your saved grvnts. |
+| `/farewell switch` | Select the active grvnt for the current server. |
+| `/farewell export` | Download the active grvnt sheet. |
+| `/farewell roll` | Roll raw dice or test an active grvnt's stat. |
+
+The generator follows the REDUX enlistment sequence and accounts for class-specific dice, fixed equipment, specialty counts, restrictions, and starting War Scrolls. Generated Discord sheets include the rule text needed to use the selected specialty at the table.
+
+### GM and homebrew
+
+| Command | Description |
+| --- | --- |
+| `/gm-characters` | List active MÖRK BORG characters in the current server. |
+| `/gm-party-loot` | Display shared party loot. |
+| `/gm-party-loot-add`, `/gm-party-loot-remove` | Manage shared loot. |
+| `/gm-npcs` | List server NPCs. |
+| `/gm-npc` | Display one NPC. |
+| `/gm-npc-create` | Create a server NPC. |
+| `/gm-classes` | List server homebrew classes. |
+| `/gm-class-create`, `/gm-class-edit`, `/gm-class-delete` | Manage homebrew classes. |
+| `/gm-features` | List reusable homebrew features. |
+| `/gm-feature-create`, `/gm-feature-edit`, `/gm-feature-delete` | Manage reusable features. |
+| `/gm-feature-link` | Attach a reusable feature to a class. |
+
+GM data and permissions are scoped to the Discord server where the command is used. By default, commands require Manage Server permission or a role named `scvm-gm`.
+
+## Data and persistence
+
+MorkBotted stores data in SQLite at `DB_PATH`.
+
+- MÖRK BORG and Farewell to Arms characters occupy separate tables.
+- Active-character selections are stored per Discord server and user.
+- Homebrew classes, NPCs, and party loot are server-scoped.
+- Existing `data/characters.json` data is migrated automatically when present.
+- Database files and SQLite journals are excluded by `.gitignore`.
+
+Back up the database file to preserve all bot state.
 
 ## Docker
 
-You can also run MorkBotted in Docker. The compose setup builds the image locally, reads secrets from `.env`, and stores SQLite data on the host in `./data`.
+Copy `.env.example` to `.env`, set `DISCORD_TOKEN`, then run:
 
-1. Create your environment file:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-2. Edit `.env` and set `DISCORD_TOKEN`. For Docker, keep the default compose-managed database settings or use:
-
-```text
-DATA_DIR=/app/data
-DB_PATH=/app/data/morkbotted.db
-```
-
-3. Build and start the bot:
-
-```powershell
+```bash
 docker compose up -d --build
 ```
 
-4. View logs:
+View logs:
 
-```powershell
+```bash
 docker compose logs -f morkbotted
 ```
 
-5. Stop the bot:
+Stop the service:
 
-```powershell
+```bash
 docker compose down
 ```
 
-The container runs as a non-root user and mounts `./data` to `/app/data`, so `data/morkbotted.db` persists across rebuilds and restarts.
+The container runs as a non-root user. Docker Compose mounts `./data` at `/app/data`, keeping the SQLite database outside the image and persistent across rebuilds.
 
-## Slash commands
+## Development
 
-- `/create`
-- `/helpmb`
-- `/scvmbirth`
-- `/characters`
-- `/character-switch`
-- `/character-archive`
-- `/character-delete`
-- `/gm-characters`
-- `/gm-party-loot`
-- `/gm-party-loot-add`
-- `/gm-party-loot-remove`
-- `/gm-npcs`
-- `/gm-npc`
-- `/gm-npc-create`
-- `/gm-classes`
-- `/gm-class-create`
-- `/gm-class-edit`
-- `/gm-class-delete`
-- `/gm-feature-create`
-- `/gm-feature-edit`
-- `/gm-feature-delete`
-- `/gm-features`
-- `/gm-feature-link`
-- `/classes`
-- `/classinfo`
-- `/sheet`
-- `/export`
-- `/omens`
-- `/gettingbetter`
-- `/setstat`
-- `/setfield`
-- `/improve`
-- `/additem`
-- `/removeitem`
-- `/notes`
-- `/addnote`
-- `/editnote`
-- `/removenote`
-- `/roll`
+Run the full test suite from the project directory:
 
-## Getting Better flow
+```bash
+python -m unittest discover -v
+```
 
-`/gettingbetter` now uses native Discord fields and supports two modes:
+Compile-check the source and tests:
 
-- `auto` rolls a d6 for each ability and adjusts it automatically
-- `manual` asks whether each ability goes `up`, `down`, or `stay`
+```bash
+python -m compileall -q morkbotted tests
+```
 
-This version updates the four core abilities:
+The test suite covers character rendering, manual creation, class features, Omens, GM access and storage isolation, Farewell generation rules, and Farewell roster persistence.
 
-- Agility
-- Presence
-- Strength
-- Toughness
+## Project structure
 
-## Omens
+```text
+MorkBotted/
+├── bot.py                         # Application entry point
+├── morkbotted/
+│   ├── bot.py                     # Discord commands and interactions
+│   ├── character.py               # MÖRK BORG character models
+│   ├── generator.py               # MÖRK BORG random generation
+│   ├── farewell.py                # Farewell rules data and generation
+│   ├── farewell_storage.py        # Separate Farewell roster persistence
+│   └── storage.py                 # Main SQLite persistence and migrations
+├── tests/                         # Unit test suite
+├── Dockerfile
+└── docker-compose.yml
+```
 
-Characters store their current Omens and derive their daily omen die from their linked class, such as `d2`, `d3`, or `d4`.
+## License
 
-Use `/omens` to recall the current count and daily die. Use `/omens roll` at the start of a new day to roll the character's daily Omens and save that result. Use `/omens set` with an amount to record a manual count.
+The bot source is released under the [MIT License](LICENSE). Referenced game names, rules, writing, and artwork remain the property of their respective creators and publishers.
 
-## Create flow
-
-`/create` now uses native command fields for:
-
-- Name
-- Class or archetype
-- Background
-- Description
-- Agility, Presence, Strength, and Toughness
-- HP and max HP
-- Omens
-- Silver
-- Equipment
-- Optional class feature selection, such as `beast form: Flayed and Dripping Wolf`
-- Notes
-
-Optional fields can be left blank. Equipment and notes can be entered as comma-separated lists.
-Ability fields use MORK BORG modifiers such as `-1`, `0`, or `+2`, not raw 3d6 ability scores.
-
-If the class name matches one of the stored templates, the bot links the character to that class and includes class-source details in sheet exports.
-If the character's class has a feature table, pick the chosen feature from `class_feature` autocomplete. Category-specific entries like `beast form: Flayed and Dripping Wolf` are preferred because they identify the exact table.
-Slash `/create` autocompletes class feature options after you choose a stored class. In a Discord server, class and feature autocomplete also includes that server's GM-created homebrew.
-
-Notes are freeform reminders only. Use `/notes` to list them, `/addnote` to append one, `/editnote` to replace a numbered note, and `/removenote` to remove a numbered note.
-
-## Random character generation
-
-`/scvmbirth` creates a ready-to-play entry-level character in one step. By default it rolls from the full stored class catalog, including community classes, but you can also pass a specific class name if you want to force the result.
-
-Generated characters include:
-
-- A random name
-- A class from the stored catalog
-- Rolled ability modifiers using the MORK BORG ability table
-- HP, Omens, and silver based on the chosen class
-- Rolled weapon and armor
-- Starter equipment and selected class features
-
-When used inside a server, the generated character becomes your active character there automatically.
-
-When you create a character inside a server, that character becomes your active character for that server automatically.
-
-## Character rosters
-
-Each Discord user can now keep multiple characters. The main play commands such as `/sheet`, `/roll`, `/gettingbetter`, `/setfield`, and `/export` act on your active character for the current server.
-
-Use these commands to manage a roster:
-
-- `/characters` to list all of your saved characters and statuses
-- `/character-switch` to choose which character is active in the current server
-- `/character-archive` to mark a character as `archived`, `dead`, `npc`, or back to `active`
-- `/character-delete` to permanently remove a character
-
-## GM commands
-
-GM commands are slash-only and server-scoped. They only read or write data for the server where the command is used.
-
-By default, GM commands require either Discord's Manage Server permission or a server role named `scvm-gm`. You can change the role name with `GM_ROLE_NAME` in `.env`. Leave `GM_ROLE_NAME` blank if you only want Manage Server to grant GM access.
-
-The bot enforces this check itself so GMs do not need broad Discord permissions. If you also want the commands hidden from everyone else in the slash-command picker, restrict the GM commands to the same role in Discord's server settings under Integrations.
-
-Use these commands to manage table-facing campaign state:
-
-- `/gm-characters` to list the active characters registered in the current server
-- `/gm-party-loot` to list shared party loot for the current server
-- `/gm-party-loot-add` to add shared party loot
-- `/gm-party-loot-remove` to remove shared party loot by id
-- `/gm-npcs` to list NPCs for the current server
-- `/gm-npc` to view one NPC by id
-- `/gm-npc-create` to create an NPC with description, disposition, and private notes
-- `/gm-classes` to list homebrew classes for the current server
-- `/gm-class-create` to create a homebrew class for the current server
-- `/gm-class-edit` to rename or update a homebrew class; leave fields blank to keep them, or type `clear` to erase optional fields
-- `/gm-class-delete` to delete a homebrew class from the current server
-- `/gm-feature-create` to create a reusable homebrew class feature for the current server
-- `/gm-feature-edit` to rename or update a reusable homebrew feature; leave fields blank to keep them, or type `clear` to erase the roll label
-- `/gm-feature-delete` to delete a reusable homebrew feature from the current server
-- `/gm-features` to list reusable homebrew features for the current server
-- `/gm-feature-link` to attach one reusable feature to one or more classes in the current server
-
-## Slash-only commands
-
-MorkBotted only exposes slash commands. It does not require Discord's privileged Message Content Intent, and `!` prefix commands are no longer registered.
-
-## Suggested next upgrades
-
-- Expand the stored character model further with dedicated tables for powers, scrolls, active effects, and session history
-- Add GM tools for calendars, misery tracking, NPC editing, and encounter notes
+Licensed rules and reference PDFs are intentionally excluded from this repository. They were used during development but are not read or required by the running bot.
